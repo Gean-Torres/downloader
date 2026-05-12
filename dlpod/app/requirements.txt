@@ -1,0 +1,6 @@
+flask>=3.0
+flask-cors>=4.0
+yt-dlp>=2024.1.1
+spotdl>=4.2.0
+gunicorn>=21.0
+pytest>=8.0.0

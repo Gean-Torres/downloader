@@ -1,0 +1,20 @@
+[Unit]
+Description=DLPOD — yt-dlp / spotdl web wrapper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Use the Podman kube play approach; it creates and starts the pod from the YAML
+ExecStartPre=-/usr/bin/podman kube down /opt/dlpod/dlpod-pod.yaml
+ExecStart=/usr/bin/podman kube play /opt/dlpod/dlpod-pod.yaml
+ExecStop=/usr/bin/podman kube down /opt/dlpod/dlpod-pod.yaml
+Restart=on-failure
+RestartSec=10
+
+# Run as your normal user (rootless Podman)
+# If you want rootless, enable with: systemctl --user enable dlpod
+# and move the unit to ~/.config/systemd/user/
+
+[Install]
+WantedBy=multi-user.target

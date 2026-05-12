@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+# ffmpeg is required by both yt-dlp and spotdl for audio conversion
+# curl is used to install deno, unzip is required by the deno installer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    unzip \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Deno for yt-dlp JavaScript runtime
+RUN curl -fsSL https://deno.land/x/install/install.sh | sh
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="$DENO_INSTALL/bin:$PATH"
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# downloads land here; mount a host volume over this path
+RUN mkdir -p /downloads
+
+EXPOSE 5000
+
+ENV DOWNLOAD_DIR=/downloads \
+    PYTHONUNBUFFERED=1
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "4", "--timeout", "0", "main:app"]

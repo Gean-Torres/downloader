@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.pytest_cache/
+
+# Downloads
+downloads/
+_serve/
+
+# Project
+.env
+.idea/
+.vscode/

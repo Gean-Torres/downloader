@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dlpod
+  labels:
+    app: dlpod
+spec:
+  containers:
+    - name: dlpod-app
+      image: localhost/dlpod:latest
+      ports:
+        - containerPort: 5000
+          hostPort: 8765        # change this to whatever port you want on the host
+          protocol: TCP
+      env:
+        - name: DOWNLOAD_DIR
+          value: /downloads
+      volumeMounts:
+        - mountPath: /downloads
+          name: downloads-vol
+      resources:
+        limits:
+          memory: 1Gi
+        requests:
+          memory: 256Mi
+  volumes:
+    - name: downloads-vol
+      hostPath:
+        # point this at your host path
+        path: /srv/Downloads/media
+        type: DirectoryOrCreate
+  restartPolicy: Always
