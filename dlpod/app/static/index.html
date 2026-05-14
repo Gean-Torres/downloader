@@ -328,9 +328,43 @@
     display: flex;
     justify-content: space-between;
   }
+
+  /* ── NOTIFICATIONS ── */
+  #notif-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .notif {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    color: var(--text);
+    padding: 12px 16px;
+    font-size: 11px;
+    border-radius: var(--radius);
+    min-width: 200px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    animation: slideIn 0.3s ease-out;
+  }
+
+  .notif.error { border-left-color: var(--accent2); }
+  .notif.warn { border-left-color: var(--yellow); }
+
+  @keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
 </style>
 </head>
 <body>
+
+<div id="notif-container"></div>
 
 <header>
   <div style="display: flex; align-items: center; gap: 12px;">
@@ -435,6 +469,20 @@ let currentTitle = '';
 let infoTimeout = null;
 let downloadedJobs = new Set();
 
+function showNotification(msg, type = 'info') {
+  const container = document.getElementById('notif-container');
+  const notif = document.createElement('div');
+  notif.className = `notif ${type}`;
+  notif.textContent = msg;
+  container.appendChild(notif);
+  setTimeout(() => {
+    notif.style.opacity = '0';
+    notif.style.transform = 'translateX(20px)';
+    notif.style.transition = 'all 0.5s ease';
+    setTimeout(() => notif.remove(), 500);
+  }, 4000);
+}
+
 function getSource(url) {
   if (!url) return 'yt';
   return url.includes('spotify.com') ? 'spotify' : 'yt';
@@ -456,6 +504,7 @@ async function fetchTitle() {
       body: JSON.stringify({ url }),
     });
     const data = await res.json();
+    if (data.error) throw new Error(data.error);
     currentTitle = data.title || 'Unknown Media';
     const playlistText = data.is_playlist ? ' [PLAYLIST/ALBUM]' : '';
     urlInfo.textContent = `▶ ${currentTitle}${playlistText}`;
@@ -468,6 +517,7 @@ async function fetchTitle() {
     urlInfo.textContent = '⚠️ Could not fetch info';
     urlInfo.style.color = 'var(--accent2)';
     currentTitle = 'download';
+    showNotification(`Info error: ${e.message}`, 'error');
   }
 }
 
@@ -559,13 +609,19 @@ dlBtn.addEventListener('click', async () => {
       }),
     });
     const data = await res.json();
-    if (data.job_id) {
+    if (data.error) {
+      showNotification(`Download error: ${data.error}`, 'error');
+    } else if (data.job_id) {
       urlInput.value = '';
       urlInfo.textContent = '';
       currentTitle = '';
       fetchJobs();
+      showNotification('Download started successfully');
     }
-  } catch(e) { console.error(e); }
+  } catch(e) { 
+    console.error(e);
+    showNotification(`Request failed: ${e.message}`, 'error');
+  }
   finally {
     dlBtn.disabled = false;
     dlBtn.textContent = 'Fetch Media';
