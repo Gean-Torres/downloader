@@ -317,8 +317,16 @@ def get_info():
         if source == "yt":
             cmd = ["yt-dlp", "--dump-json", "--flat-playlist", "--no-warnings", url]
             output = subprocess.check_output(cmd, text=True)
-            info = json.loads(output)
-            title = info.get("title") or info.get("playlist_title") or "Unknown Title"
+            
+            # If yt-dlp returns multiple lines (one per entry in playlist/mix),
+            # we just take the first one or try to find a title.
+            lines = [l.strip() for l in output.splitlines() if l.strip()]
+            if not lines:
+                return jsonify({"title": "Unknown Media"})
+            
+            info = json.loads(lines[0])
+            # If it's a playlist, it might have a playlist_title
+            title = info.get("playlist_title") or info.get("title") or "Unknown Title"
             return jsonify({"title": title})
         else:
             # Fallback for Spotify if yt-dlp info fails or isn't detailed
