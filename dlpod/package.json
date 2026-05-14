@@ -1,0 +1,27 @@
+{
+  "name": "dlpod",
+  "version": "1.0.0",
+  "description": "yt-dlp + spotdl Web Wrapper",
+  "main": "app/main.py",
+  "scripts": {
+    "setup": "python3 -m venv venv && ./venv/bin/pip install -r app/requirements.txt",
+    "dev": "export DOWNLOAD_DIR=./downloads && mkdir -p $DOWNLOAD_DIR && nodemon --watch app --ext py,html --exec './venv/bin/python3 app/main.py'",
+    "start": "export DOWNLOAD_DIR=./downloads && mkdir -p $DOWNLOAD_DIR && ./venv/bin/gunicorn --bind 0.0.0.0:5000 app.main:app",
+    "test": "export DOWNLOAD_DIR=/tmp/dlpod_test && ./venv/bin/pytest app/test_main.py",
+    "pod:build": "podman build -t dlpod:latest -f app/Containerfile app/",
+    "pod:up": "podman kube play dlpod-pod.yaml",
+    "pod:down": "podman kube down dlpod-pod.yaml",
+    "pod:rebuild": "npm run pod:build && npm run pod:down && npm run pod:up"
+  },
+  "keywords": [
+    "yt-dlp",
+    "spotdl",
+    "downloader",
+    "flask"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

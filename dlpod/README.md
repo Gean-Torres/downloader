@@ -13,11 +13,34 @@ dlpod/
 │   ├── Containerfile      # Podman/Docker image definition
 │   └── static/
 │       └── index.html     # Single-page frontend
+├── package.json           # Node.js scripts for development
 ├── dlpod-pod.yaml         # Podman kube YAML
 └── dlpod.service          # systemd unit
 ```
 
-## Build & Deploy
+## Local Development (Easiest for Live Testing)
+
+If you have Node.js and Python 3 installed, you can use the following workflow:
+
+### 1. Initial Setup
+```bash
+npm install
+npm run setup
+```
+This installs `nodemon` for auto-reloading and sets up a Python virtual environment with all dependencies.
+
+### 2. Run in Development Mode
+```bash
+npm run dev
+```
+This will start the Flask server on `http://127.0.0.1:5000` and watch for any changes in `app/main.py` or `app/static/index.html`, automatically restarting the server when you save.
+
+### 3. Run Tests
+```bash
+npm test
+```
+
+## Build & Deploy (Production)
 
 ### 1. Build the image
 

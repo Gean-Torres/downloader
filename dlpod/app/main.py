@@ -30,10 +30,28 @@ def detect_source(url: str) -> str:
         return "spotify"
     return "yt"
 
+import re
+
 def emit(job_id: str, line: str):
     with jobs_lock:
         if job_id in jobs:
             jobs[job_id]["log"].append(line)
+            jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
+            
+            # Basic progress parsing for yt-dlp
+            # Example: [download]  10.0% of 100.00MiB at 1.00MiB/s ETA 01:30
+            if "[download]" in line and "%" in line:
+                match = re.search(r"(\d+\.\d+)%", line)
+                if match:
+                    jobs[job_id]["progress"] = float(match.group(1))
+            
+            # Basic progress parsing for spotdl
+            # Example: 10%|██        | 1/10 [00:01<00:09, 1.00it/s]
+            elif "%|" in line:
+                match = re.search(r"(\d+)%", line)
+                if match:
+                    jobs[job_id]["progress"] = float(match.group(1))
+
             # Keep log size reasonable
             if len(jobs[job_id]["log"]) > 1000:
                 jobs[job_id]["log"] = jobs[job_id]["log"][-1000:]
@@ -43,6 +61,8 @@ def finish(job_id: str, status: str, filename: str | None = None):
         if job_id in jobs:
             jobs[job_id]["status"] = status
             jobs[job_id]["finished_at"] = datetime.utcnow().isoformat()
+            jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
+            jobs[job_id]["progress"] = 100 if status == "done" else jobs[job_id].get("progress", 0)
             if filename:
                 jobs[job_id]["filename"] = filename
 
@@ -56,174 +76,248 @@ def cleanup_job_dir(job_dir: Path):
 # ── background tasks ─────────────────────────────────────────────────────────
 
 def background_cleanup():
-    """Periodically cleans up old files in SERVE_DIR and old jobs."""
+    """Periodically cleans up old files in SERVE_DIR and old/stuck jobs."""
     while True:
-        time.sleep(3600)  # Run every hour
+        time.sleep(60)  # Check more frequently
         now = datetime.utcnow()
         
         # Clean up SERVE_DIR (files older than 2 hours)
-        for f in SERVE_DIR.iterdir():
-            if f.is_file():
-                mtime = datetime.fromtimestamp(f.stat().st_mtime)
-                if now - mtime > timedelta(hours=2):
-                    try:
-                        f.unlink()
-                        print(f"Cleaned up old serve file: {f.name}")
-                    except Exception as e:
-                        print(f"Error deleting {f}: {e}")
+        try:
+            for f in SERVE_DIR.iterdir():
+                if f.is_file():
+                    mtime = datetime.fromtimestamp(f.stat().st_mtime)
+                    if now - mtime > timedelta(hours=2):
+                        try:
+                            f.unlink()
+                        except:
+                            pass
+        except:
+            pass
 
-        # Clean up old jobs from memory (older than 24 hours)
         with jobs_lock:
             to_delete = []
             for jid, job in jobs.items():
+                # Clean up finished jobs older than 24 hours
                 if job["finished_at"]:
                     finished_at = datetime.fromisoformat(job["finished_at"])
                     if now - finished_at > timedelta(hours=24):
                         to_delete.append(jid)
+                        continue
+                
+                # Mark jobs stuck in "running" as "error" if no activity for 10 mins
+                if job["status"] == "running" and job.get("last_activity"):
+                    last_activity = datetime.fromisoformat(job["last_activity"])
+                    if now - last_activity > timedelta(minutes=10):
+                        job["status"] = "error"
+                        job["log"].append("❌ Job timed out (no activity for 10 minutes)")
+                        job["finished_at"] = now.isoformat()
             
             for jid in to_delete:
                 del jobs[jid]
-                print(f"Cleaned up old job from memory: {jid}")
 
 # Start background cleanup
 threading.Thread(target=background_cleanup, daemon=True).start()
 
 # ── download workers ─────────────────────────────────────────────────────────
 
-def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, save_to_volume: bool):
+def run_ytdlp(job_id: str, url: str, fmt: str, quality: str):
     job_dir = DOWNLOAD_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    # Base command
-    cmd = ["yt-dlp", "--no-playlist", "--newline", "--progress", "-o", str(job_dir / "%(title)s.%(ext)s")]
+    with jobs_lock:
+        job_title = jobs[job_id].get("title", "download")
+        jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
+        jobs[job_id]["progress"] = 0
 
-    # Format logic
-    if fmt == "mp3":
-        cmd += ["-x", "--audio-format", "mp3", "--audio-quality", quality]
-    elif fmt == "mp4":
-        cmd += ["-f", f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]", "--merge-output-format", "mp4"]
-    elif fmt == "opus":
-        cmd += ["-x", "--audio-format", "opus"]
-    else:
-        cmd += ["-f", "bestaudio/best"]
-
-    cmd.append(url)
-
-    emit(job_id, f"▶ Running yt-dlp: {' '.join(cmd)}")
-    
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in proc.stdout:
-            emit(job_id, line.rstrip())
-        proc.wait()
-    except Exception as e:
-        emit(job_id, f"❌ Process error: {str(e)}")
-        finish(job_id, "error")
-        cleanup_job_dir(job_dir)
-        return
+        # Base command - removed --no-playlist
+        cmd = ["yt-dlp", "--newline", "--progress", "-o", str(job_dir / "%(title)s.%(ext)s")]
 
-    if proc.returncode != 0:
-        emit(job_id, f"❌ yt-dlp exited with code {proc.returncode}")
-        finish(job_id, "error")
-        cleanup_job_dir(job_dir)
-        return
+        # Format logic
+        if fmt == "mp3":
+            cmd += ["-x", "--audio-format", "mp3", "--audio-quality", quality]
+        elif fmt == "mp4":
+            cmd += ["-f", f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]", "--merge-output-format", "mp4"]
+        elif fmt == "opus":
+            cmd += ["-x", "--audio-format", "opus"]
+        else:
+            cmd += ["-f", "bestaudio/best"]
 
-    files = list(job_dir.iterdir())
-    if not files:
-        emit(job_id, "❌ No files found after download")
-        finish(job_id, "error")
-        cleanup_job_dir(job_dir)
-        return
+        cmd.append(url)
 
-    # Sort files by size or name to pick the most likely candidate if multiple
-    output_file = sorted(files, key=lambda f: f.stat().st_size, reverse=True)[0]
-    
-    if save_to_volume:
-        # Move file to the root of DOWNLOAD_DIR
-        final_dest = DOWNLOAD_DIR / output_file.name
-        # Avoid overwriting existing files with same name
-        if final_dest.exists():
-            final_dest = DOWNLOAD_DIR / f"{job_id}_{output_file.name}"
+        emit(job_id, f"▶ Running yt-dlp: {' '.join(cmd)}")
         
-        output_file.rename(final_dest)
-        finish(job_id, "done", str(final_dest))
-        emit(job_id, f"✅ Saved to volume: {final_dest.name}")
-    else:
-        # Move to serve area
-        dest = SERVE_DIR / f"{job_id}_{output_file.name}"
-        output_file.rename(dest)
-        with jobs_lock:
-            jobs[job_id]["serve_path"] = str(dest)
-        finish(job_id, "done", str(dest))
-        emit(job_id, "✅ Ready for browser download")
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in proc.stdout:
+                emit(job_id, line.rstrip())
+            proc.wait()
+        except Exception as e:
+            emit(job_id, f"❌ Process error: {str(e)}")
+            finish(job_id, "error")
+            return
 
-    cleanup_job_dir(job_dir)
+        if proc.returncode != 0:
+            emit(job_id, f"❌ yt-dlp exited with code {proc.returncode}")
+            finish(job_id, "error")
+            return
 
+        files = list(job_dir.iterdir())
+        if not files:
+            emit(job_id, "❌ No files found after download")
+            finish(job_id, "error")
+            return
 
-def run_spotdl(job_id: str, url: str, fmt: str, save_to_volume: bool):
-    job_dir = DOWNLOAD_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-
-    # spotdl command
-    cmd = ["spotdl", "download", url, "--output", str(job_dir), "--format", fmt if fmt in ("mp3", "opus", "flac", "ogg") else "mp3"]
-
-    emit(job_id, f"▶ Running spotdl: {' '.join(cmd)}")
-    
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in proc.stdout:
-            emit(job_id, line.rstrip())
-        proc.wait()
-    except Exception as e:
-        emit(job_id, f"❌ Process error: {str(e)}")
-        finish(job_id, "error")
-        cleanup_job_dir(job_dir)
-        return
-
-    files = list(job_dir.iterdir())
-    if not files or proc.returncode != 0:
-        emit(job_id, f"❌ spotdl failed (code {proc.returncode}) or no files produced")
-        finish(job_id, "error")
-        cleanup_job_dir(job_dir)
-        return
-
-    # Handle multiple files (playlists/albums) by zipping
-    if len(files) > 1:
-        emit(job_id, "📦 Multiple files detected, zipping...")
-        import zipfile
-        zip_name = f"{job_id}_playlist.zip"
-        zip_path = (DOWNLOAD_DIR if save_to_volume else SERVE_DIR) / zip_name
-        
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            for f in files:
-                zf.write(f, f.name)
-        
-        finish(job_id, "done", str(zip_path))
-        if not save_to_volume:
+        if len(files) > 1:
+            # Playlist/Album: Move folder to DOWNLOAD_DIR
+            final_dest_dir = DOWNLOAD_DIR / job_title
+            # Avoid overwriting or mixing with existing folders
+            if final_dest_dir.exists():
+                final_dest_dir = DOWNLOAD_DIR / f"{job_title}_{job_id[:8]}"
+            
+            shutil.move(str(job_dir), str(final_dest_dir))
+            
+            # Create zip for web download
+            import zipfile
+            zip_name = f"{final_dest_dir.name}.zip"
+            zip_path = SERVE_DIR / zip_name
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                for f in final_dest_dir.rglob("*"):
+                    zf.write(f, f.relative_to(final_dest_dir))
+            
             with jobs_lock:
                 jobs[job_id]["serve_path"] = str(zip_path)
-        emit(job_id, f"✅ Zip ready: {zip_name}")
-    else:
-        output_file = files[0]
-        if save_to_volume:
+            finish(job_id, "done", str(final_dest_dir))
+            emit(job_id, f"✅ Saved playlist to volume: {final_dest_dir.name}")
+            emit(job_id, "✅ Zip ready for browser download")
+        else:
+            # Single file
+            output_file = files[0]
             final_dest = DOWNLOAD_DIR / output_file.name
             if final_dest.exists():
-                final_dest = DOWNLOAD_DIR / f"{job_id}_{output_file.name}"
+                final_dest = DOWNLOAD_DIR / f"{job_id[:8]}_{output_file.name}"
+            
             output_file.rename(final_dest)
+            
+            # Move copy to serve area for web download
+            serve_copy = SERVE_DIR / final_dest.name
+            shutil.copy2(final_dest, serve_copy)
+            
+            with jobs_lock:
+                jobs[job_id]["serve_path"] = str(serve_copy)
             finish(job_id, "done", str(final_dest))
             emit(job_id, f"✅ Saved to volume: {final_dest.name}")
-        else:
-            dest = SERVE_DIR / f"{job_id}_{output_file.name}"
-            output_file.rename(dest)
-            with jobs_lock:
-                jobs[job_id]["serve_path"] = str(dest)
-            finish(job_id, "done", str(dest))
             emit(job_id, "✅ Ready for browser download")
 
-    cleanup_job_dir(job_dir)
+    except Exception as e:
+        emit(job_id, f"❌ Unexpected error: {str(e)}")
+        finish(job_id, "error")
+    finally:
+        cleanup_job_dir(job_dir)
+
+
+def run_spotdl(job_id: str, url: str, fmt: str):
+    job_dir = DOWNLOAD_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    with jobs_lock:
+        job_title = jobs[job_id].get("title", "download")
+        jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
+        jobs[job_id]["progress"] = 0
+
+    try:
+        # spotdl command
+        cmd = ["spotdl", "download", url, "--output", str(job_dir), "--format", fmt if fmt in ("mp3", "opus", "flac", "ogg") else "mp3"]
+
+        emit(job_id, f"▶ Running spotdl: {' '.join(cmd)}")
+        
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in proc.stdout:
+                emit(job_id, line.rstrip())
+            proc.wait()
+        except Exception as e:
+            emit(job_id, f"❌ Process error: {str(e)}")
+            finish(job_id, "error")
+            return
+
+        files = list(job_dir.iterdir())
+        if not files or proc.returncode != 0:
+            emit(job_id, f"❌ spotdl failed (code {proc.returncode}) or no files produced")
+            finish(job_id, "error")
+            return
+
+        if len(files) > 1:
+            # Playlist/Album: Move folder to DOWNLOAD_DIR
+            final_dest_dir = DOWNLOAD_DIR / job_title
+            if final_dest_dir.exists():
+                final_dest_dir = DOWNLOAD_DIR / f"{job_title}_{job_id[:8]}"
+            
+            shutil.move(str(job_dir), str(final_dest_dir))
+            
+            # Create zip for web download
+            import zipfile
+            zip_name = f"{final_dest_dir.name}.zip"
+            zip_path = SERVE_DIR / zip_name
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                for f in final_dest_dir.rglob("*"):
+                    zf.write(f, f.relative_to(final_dest_dir))
+            
+            with jobs_lock:
+                jobs[job_id]["serve_path"] = str(zip_path)
+            finish(job_id, "done", str(final_dest_dir))
+            emit(job_id, f"✅ Saved playlist to volume: {final_dest_dir.name}")
+            emit(job_id, "✅ Zip ready for browser download")
+        else:
+            # Single file
+            output_file = files[0]
+            final_dest = DOWNLOAD_DIR / output_file.name
+            if final_dest.exists():
+                final_dest = DOWNLOAD_DIR / f"{job_id[:8]}_{output_file.name}"
+            
+            output_file.rename(final_dest)
+            
+            # Move copy to serve area for web download
+            serve_copy = SERVE_DIR / final_dest.name
+            shutil.copy2(final_dest, serve_copy)
+            
+            with jobs_lock:
+                jobs[job_id]["serve_path"] = str(serve_copy)
+            finish(job_id, "done", str(final_dest))
+            emit(job_id, f"✅ Saved to volume: {final_dest.name}")
+            emit(job_id, "✅ Ready for browser download")
+
+    except Exception as e:
+        emit(job_id, f"❌ Unexpected error: {str(e)}")
+        finish(job_id, "error")
+    finally:
+        cleanup_job_dir(job_dir)
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
+
+@app.route("/api/info", methods=["POST"])
+def get_info():
+    data = request.json or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL is required"}), 400
+
+    source = detect_source(url)
+    try:
+        # For yt-dlp sources (YouTube, etc)
+        if source == "yt":
+            cmd = ["yt-dlp", "--dump-json", "--flat-playlist", "--no-warnings", url]
+            output = subprocess.check_output(cmd, text=True)
+            info = json.loads(output)
+            title = info.get("title") or info.get("playlist_title") or "Unknown Title"
+            return jsonify({"title": title})
+        else:
+            # Fallback for Spotify if yt-dlp info fails or isn't detailed
+            # In a real app we might use spotdl --search or similar, but for now:
+            return jsonify({"title": "Spotify Media"})
+    except Exception as e:
+        return jsonify({"title": "Unknown Media", "error": str(e)}), 200
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
@@ -231,7 +325,7 @@ def start_download():
     url = data.get("url", "").strip()
     fmt = data.get("format", "mp3")
     quality = data.get("quality", "192")
-    save_to_volume = data.get("save_to_volume", False)
+    title = data.get("title", "download").strip()
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -246,7 +340,7 @@ def start_download():
             "source": source,
             "format": fmt,
             "quality": quality,
-            "save_to_volume": save_to_volume,
+            "title": title,
             "status": "running",
             "log": [],
             "filename": None,
@@ -256,9 +350,9 @@ def start_download():
         }
 
     if source == "spotify":
-        t = threading.Thread(target=run_spotdl, args=(job_id, url, fmt, save_to_volume), daemon=True)
+        t = threading.Thread(target=run_spotdl, args=(job_id, url, fmt), daemon=True)
     else:
-        t = threading.Thread(target=run_ytdlp, args=(job_id, url, fmt, quality, save_to_volume), daemon=True)
+        t = threading.Thread(target=run_ytdlp, args=(job_id, url, fmt, quality), daemon=True)
     t.start()
 
     return jsonify({"job_id": job_id}), 202

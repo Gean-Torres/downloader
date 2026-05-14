@@ -1,0 +1,13 @@
+node_modules/
+venv/
+downloads/
+__pycache__/
+.pytest_cache/
+*.pyc
+.git/
+.env
+.ipynb_checkpoints/
+*.zip
+*.mp3
+*.mp4
+*.opus
