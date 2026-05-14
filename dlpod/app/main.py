@@ -251,22 +251,22 @@ def run_spotdl(job_id: str, url: str, fmt: str):
 
         emit(job_id, f"▶ Running spotdl: {' '.join(cmd)}")
         
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            with jobs_lock:
-                if job_id in jobs:
-                    jobs[job_id]["proc"] = proc
-            for line in proc.stdout:
-                emit(job_id, line.rstrip())
-            proc.wait()
-        except Exception as e:
-            emit(job_id, f"❌ Process error: {str(e)}")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["proc"] = proc
+        for line in proc.stdout:
+            emit(job_id, line.rstrip())
+        proc.wait()
+
+        if proc.returncode != 0:
+            emit(job_id, f"❌ spotdl failed with code {proc.returncode}")
             finish(job_id, "error")
             return
 
         files = list(job_dir.iterdir())
-        if not files or proc.returncode != 0:
-            emit(job_id, f"❌ spotdl failed (code {proc.returncode}) or no files produced")
+        if not files:
+            emit(job_id, "❌ No files produced by spotdl")
             finish(job_id, "error")
             return
 
@@ -311,7 +311,7 @@ def run_spotdl(job_id: str, url: str, fmt: str):
             emit(job_id, "✅ Ready for browser download")
 
     except Exception as e:
-        emit(job_id, f"❌ Unexpected error: {str(e)}")
+        emit(job_id, f"❌ Unexpected error in spotdl worker: {str(e)}")
         finish(job_id, "error")
     finally:
         cleanup_job_dir(job_dir)

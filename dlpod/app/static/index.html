@@ -631,6 +631,10 @@ dlBtn.addEventListener('click', async () => {
 async function fetchJobs() {
   try {
     const res = await fetch('/api/jobs');
+    if (!res.ok) {
+       console.error('Jobs poll failed', res.status);
+       return; // Don't clear UI if server is temporarily down
+    }
     const data = await res.json();
     renderJobs(data);
     if (modalJobId) refreshModal();
