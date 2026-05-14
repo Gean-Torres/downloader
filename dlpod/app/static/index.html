@@ -387,7 +387,7 @@
         </div>
       </div>
 
-      <button class="btn btn-primary" id="dl-btn">Fetch Media</button>
+      <button type="button" class="btn btn-primary" id="dl-btn">Fetch Media</button>
     </div>
   </div>
 
@@ -395,7 +395,7 @@
     <div>
       <div class="section-title" style="justify-content: space-between;">
         <span>Active & Recent Jobs</span>
-        <button class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;">Clear All</button>
+        <button type="button" class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;">Clear All</button>
       </div>
       <div class="job-list" id="job-list"></div>
     </div>
@@ -406,7 +406,7 @@
   <div class="modal">
     <div class="modal-header">
       <span style="font-size: 10px; text-transform: uppercase;">Job Log</span>
-      <button class="btn btn-ghost" onclick="closeModal()" style="padding: 2px 8px;">✕</button>
+      <button type="button" class="btn btn-ghost" onclick="closeModal()" style="padding: 2px 8px;">✕</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
   </div>
@@ -647,10 +647,10 @@ function renderJobs(list) {
         <div class="job-info">
           <div class="job-url" title="${job.title || job.url}">${job.title || job.url}</div>
           <div style="display: flex; gap: 4px;">
-            <button class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">Log</button>
-            ${job.status === 'running' ? `<button class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">Stop</button>` : ''}
+            <button type="button" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">Log</button>
+            ${job.status === 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">Stop</button>` : ''}
             ${job.status === 'done' && job.serve_path ? `<a href="/api/jobs/${job.id}/download" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;">Save</a>` : ''}
-            ${job.status !== 'running' ? `<button class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="deleteJob('${job.id}')">✕</button>` : ''}
+            ${job.status !== 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="deleteJob('${job.id}')">✕</button>` : ''}
           </div>
         </div>
         <div class="job-meta">

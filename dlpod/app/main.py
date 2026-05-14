@@ -240,7 +240,14 @@ def run_spotdl(job_id: str, url: str, fmt: str):
 
     try:
         # spotdl command
-        cmd = ["spotdl", "download", url, "--output", str(job_dir), "--format", fmt if fmt in ("mp3", "opus", "flac", "ogg") else "mp3"]
+        # Fixed: --output should be a template, not just the directory
+        cmd = [
+            "spotdl", 
+            "download", 
+            url, 
+            "--output", str(job_dir / "{title}.{output-ext}"), 
+            "--format", fmt if fmt in ("mp3", "opus", "flac", "ogg") else "mp3"
+        ]
 
         emit(job_id, f"▶ Running spotdl: {' '.join(cmd)}")
         
