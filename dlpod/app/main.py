@@ -65,6 +65,8 @@ def finish(job_id: str, status: str, filename: str | None = None):
             jobs[job_id]["progress"] = 100 if status == "done" else jobs[job_id].get("progress", 0)
             if filename:
                 jobs[job_id]["filename"] = filename
+            # Clean up process reference
+            jobs[job_id].pop("proc", None)
 
 def cleanup_job_dir(job_dir: Path):
     if job_dir.exists():
@@ -157,6 +159,9 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, embed_metadata: boo
         
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["proc"] = proc
             for line in proc.stdout:
                 emit(job_id, line.rstrip())
             proc.wait()
@@ -241,6 +246,9 @@ def run_spotdl(job_id: str, url: str, fmt: str):
         
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["proc"] = proc
             for line in proc.stdout:
                 emit(job_id, line.rstrip())
             proc.wait()
@@ -327,13 +335,14 @@ def get_info():
             info = json.loads(lines[0])
             # If it's a playlist, it might have a playlist_title
             title = info.get("playlist_title") or info.get("title") or "Unknown Title"
-            return jsonify({"title": title})
+            is_playlist = len(lines) > 1 or ("_type" in info and info["_type"] == "playlist")
+            return jsonify({"title": title, "is_playlist": is_playlist})
         else:
             # Fallback for Spotify if yt-dlp info fails or isn't detailed
-            # In a real app we might use spotdl --search or similar, but for now:
-            return jsonify({"title": "Spotify Media"})
+            is_playlist = "spotify.com/playlist" in url or "spotify.com/album" in url
+            return jsonify({"title": "Spotify Media", "is_playlist": is_playlist})
     except Exception as e:
-        return jsonify({"title": "Unknown Media", "error": str(e)}), 200
+        return jsonify({"title": "Unknown Media", "error": str(e), "is_playlist": False}), 200
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
@@ -373,6 +382,28 @@ def start_download():
     t.start()
 
     return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/api/jobs/<job_id>/stop", methods=["POST"])
+def stop_job(job_id):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+        
+        if job["status"] == "running":
+            proc = job.get("proc")
+            if proc:
+                try:
+                    proc.terminate()
+                    job["status"] = "stopped"
+                    job["log"].append("🛑 Job stopped by user")
+                    job["finished_at"] = datetime.utcnow().isoformat()
+                    return jsonify({"ok": True})
+                except Exception as e:
+                    return jsonify({"error": str(e)}), 500
+        
+    return jsonify({"error": "Job is not running"}), 400
 
 
 @app.route("/api/jobs", methods=["GET"])

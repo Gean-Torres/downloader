@@ -231,6 +231,7 @@
   .job-card.running { border-left: 2px solid var(--accent); }
   .job-card.done    { border-left: 2px solid var(--green); }
   .job-card.error   { border-left: 2px solid var(--accent2); }
+  .job-card.stopped { border-left: 2px solid var(--muted); }
 
   .job-info {
     display: flex;
@@ -456,9 +457,16 @@ async function fetchTitle() {
     });
     const data = await res.json();
     currentTitle = data.title || 'Unknown Media';
-    urlInfo.textContent = `▶ ${currentTitle}`;
+    const playlistText = data.is_playlist ? ' [PLAYLIST/ALBUM]' : '';
+    urlInfo.textContent = `▶ ${currentTitle}${playlistText}`;
+    if (data.is_playlist) {
+      urlInfo.style.color = 'var(--yellow)';
+    } else {
+      urlInfo.style.color = 'var(--accent)';
+    }
   } catch (e) {
     urlInfo.textContent = '⚠️ Could not fetch info';
+    urlInfo.style.color = 'var(--accent2)';
     currentTitle = 'download';
   }
 }
@@ -640,6 +648,7 @@ function renderJobs(list) {
           <div class="job-url" title="${job.title || job.url}">${job.title || job.url}</div>
           <div style="display: flex; gap: 4px;">
             <button class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">Log</button>
+            ${job.status === 'running' ? `<button class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">Stop</button>` : ''}
             ${job.status === 'done' && job.serve_path ? `<a href="/api/jobs/${job.id}/download" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;">Save</a>` : ''}
             ${job.status !== 'running' ? `<button class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="deleteJob('${job.id}')">✕</button>` : ''}
           </div>
@@ -647,7 +656,7 @@ function renderJobs(list) {
         <div class="job-meta">
           <span>${job.source}</span>
           <span>${job.format}</span>
-          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : 'var(--yellow)'}">${job.status}</span>
+          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${job.status}</span>
         </div>
         <div class="progress-container">
           <div class="progress-bar" style="width: ${job.progress || 0}%"></div>
@@ -656,6 +665,11 @@ function renderJobs(list) {
     }
     jobs[job.id] = job;
   });
+}
+
+async function stopJob(id) {
+  await fetch(`/api/jobs/${id}/stop`, { method: 'POST' });
+  fetchJobs();
 }
 
 async function deleteJob(id) {
