@@ -131,7 +131,16 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str):
 
     try:
         # Base command - removed --no-playlist
-        cmd = ["yt-dlp", "--newline", "--progress", "-o", str(job_dir / "%(title)s.%(ext)s")]
+        cmd = [
+            "yt-dlp", 
+            "--newline", 
+            "--progress", 
+            "--embed-metadata", 
+            "--embed-thumbnail", 
+            "--embed-subs", 
+            "--embed-chapters",
+            "-o", str(job_dir / "%(title)s.%(ext)s")
+        ]
 
         # Format logic
         if fmt == "mp3":
