@@ -369,6 +369,23 @@
         </div>
       </div>
 
+      <div class="field">
+        <div class="toggle-row" style="margin-bottom: 8px;">
+          <span class="toggle-label">Embed Metadata & Thumbnails</span>
+          <label class="toggle">
+            <input type="checkbox" id="embed-toggle" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Auto-download when ready</span>
+          <label class="toggle">
+            <input type="checkbox" id="autodl-toggle">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
       <button class="btn btn-primary" id="dl-btn">Fetch Media</button>
     </div>
   </div>
@@ -410,9 +427,12 @@ const fmtSelect = document.getElementById('fmt-select');
 const qualField = document.getElementById('quality-field');
 const qualSelect = document.getElementById('quality-select');
 const dlBtn = document.getElementById('dl-btn');
+const embedToggle = document.getElementById('embed-toggle');
+const autodlToggle = document.getElementById('autodl-toggle');
 
 let currentTitle = '';
 let infoTimeout = null;
+let downloadedJobs = new Set();
 
 function getSource(url) {
   if (!url) return 'yt';
@@ -527,6 +547,7 @@ dlBtn.addEventListener('click', async () => {
         format: fmtSelect.value,
         quality: qualSelect.value || '192',
         title: currentTitle || 'download',
+        embed_metadata: embedToggle.checked
       }),
     });
     const data = await res.json();
@@ -550,6 +571,21 @@ async function fetchJobs() {
     renderJobs(data);
     if (modalJobId) refreshModal();
     
+    // Auto-download logic
+    if (autodlToggle.checked) {
+      data.forEach(job => {
+        if (job.status === 'done' && !downloadedJobs.has(job.id)) {
+          downloadedJobs.add(job.id);
+          const link = document.createElement('a');
+          link.href = `/api/jobs/${job.id}/download`;
+          link.download = '';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      });
+    }
+
     // Dynamically adjust polling
     const hasActive = data.some(j => j.status === 'running');
     if (hasActive && (!pollInterval || pollInterval._ms !== 1000)) {

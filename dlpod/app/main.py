@@ -120,7 +120,7 @@ threading.Thread(target=background_cleanup, daemon=True).start()
 
 # ── download workers ─────────────────────────────────────────────────────────
 
-def run_ytdlp(job_id: str, url: str, fmt: str, quality: str):
+def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, embed_metadata: bool = True):
     job_dir = DOWNLOAD_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -135,12 +135,11 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str):
             "yt-dlp", 
             "--newline", 
             "--progress", 
-            "--embed-metadata", 
-            "--embed-thumbnail", 
-            "--embed-subs", 
-            "--embed-chapters",
             "-o", str(job_dir / "%(title)s.%(ext)s")
         ]
+
+        if embed_metadata:
+            cmd += ["--embed-metadata", "--embed-thumbnail", "--embed-subs", "--embed-chapters"]
 
         # Format logic
         if fmt == "mp3":
@@ -335,6 +334,7 @@ def start_download():
     fmt = data.get("format", "mp3")
     quality = data.get("quality", "192")
     title = data.get("title", "download").strip()
+    embed_metadata = data.get("embed_metadata", True)
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -361,7 +361,7 @@ def start_download():
     if source == "spotify":
         t = threading.Thread(target=run_spotdl, args=(job_id, url, fmt), daemon=True)
     else:
-        t = threading.Thread(target=run_ytdlp, args=(job_id, url, fmt, quality), daemon=True)
+        t = threading.Thread(target=run_ytdlp, args=(job_id, url, fmt, quality, embed_metadata), daemon=True)
     t.start()
 
     return jsonify({"job_id": job_id}), 202
