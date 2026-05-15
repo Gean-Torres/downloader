@@ -404,6 +404,25 @@
         </div>
       </div>
 
+      <div class="row">
+        <div class="field">
+          <label>Download Mode</label>
+          <select id="mode-select">
+            <option value="auto">auto-detect</option>
+            <option value="single">single media</option>
+            <option value="playlist">playlist/album</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Duplicates</label>
+          <select id="duplicate-select">
+            <option value="reuse">reuse cached</option>
+            <option value="again">download again</option>
+            <option value="override">override existing</option>
+          </select>
+        </div>
+      </div>
+
       <div class="field">
         <div class="toggle-row" style="margin-bottom: 8px;">
           <span class="toggle-label">Embed Metadata & Thumbnails</span>
@@ -447,7 +466,7 @@
 </div>
 
 <footer>
-  <span>DLPOD v1.1</span>
+  <span>DLPOD v1.2</span>
   <span>yt-dlp + spotdl</span>
 </footer>
 
@@ -464,10 +483,13 @@ const qualSelect = document.getElementById('quality-select');
 const dlBtn = document.getElementById('dl-btn');
 const embedToggle = document.getElementById('embed-toggle');
 const autodlToggle = document.getElementById('autodl-toggle');
+const modeSelect = document.getElementById('mode-select');
+const duplicateSelect = document.getElementById('duplicate-select');
 
 let currentTitle = '';
 let infoTimeout = null;
 let downloadedJobs = new Set();
+let notifiedTerminalJobs = new Set();
 
 function showNotification(msg, type = 'info') {
   const container = document.getElementById('notif-container');
@@ -480,7 +502,13 @@ function showNotification(msg, type = 'info') {
     notif.style.transform = 'translateX(20px)';
     notif.style.transition = 'all 0.5s ease';
     setTimeout(() => notif.remove(), 500);
-  }, 4000);
+  }, 5000);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
 }
 
 function getSource(url) {
@@ -506,7 +534,8 @@ async function fetchTitle() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     currentTitle = data.title || 'Unknown Media';
-    const playlistText = data.is_playlist ? ' [PLAYLIST/ALBUM]' : '';
+    if (data.mode && modeSelect.value === 'auto') modeSelect.dataset.detected = data.mode;
+    const playlistText = data.is_playlist ? ` [PLAYLIST/ALBUM${data.item_count ? ': ' + data.item_count : ''}]` : ' [SINGLE]';
     urlInfo.textContent = `▶ ${currentTitle}${playlistText}`;
     if (data.is_playlist) {
       urlInfo.style.color = 'var(--yellow)';
@@ -605,7 +634,9 @@ dlBtn.addEventListener('click', async () => {
         format: fmtSelect.value,
         quality: qualSelect.value || '192',
         title: currentTitle || 'download',
-        embed_metadata: embedToggle.checked
+        embed_metadata: embedToggle.checked,
+        mode: modeSelect.value,
+        duplicate_action: duplicateSelect.value
       }),
     });
     const data = await res.json();
@@ -636,6 +667,16 @@ async function fetchJobs() {
        return; // Don't clear UI if server is temporarily down
     }
     const data = await res.json();
+    data.forEach(job => {
+      if ((job.status === 'error' || job.status === 'stopped') && !notifiedTerminalJobs.has(job.id)) {
+        notifiedTerminalJobs.add(job.id);
+        showNotification(`${job.title || 'Download'} ${job.status === 'error' ? 'failed' : 'stopped'}`, job.status === 'error' ? 'error' : 'warn');
+      }
+      if (job.status === 'done' && job.duplicate_used && !notifiedTerminalJobs.has(job.id)) {
+        notifiedTerminalJobs.add(job.id);
+        showNotification(`Reused cached media: ${job.title || job.filename || 'download'}`);
+      }
+    });
     renderJobs(data);
     if (modalJobId) refreshModal();
     
@@ -705,7 +746,7 @@ function renderJobs(list) {
       el.className = `job-card ${job.status}`;
       el.innerHTML = `
         <div class="job-info">
-          <div class="job-url" title="${job.title || job.url}">${job.title || job.url}</div>
+          <div class="job-url" title="${escapeHtml(job.filename || job.url)}">${escapeHtml(job.title || job.url)}</div>
           <div style="display: flex; gap: 4px;">
             <button type="button" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">Log</button>
             ${job.status === 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">Stop</button>` : ''}
@@ -714,9 +755,12 @@ function renderJobs(list) {
           </div>
         </div>
         <div class="job-meta">
-          <span>${job.source}</span>
-          <span>${job.format}</span>
-          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${job.status}</span>
+          <span>${escapeHtml(job.source)}</span>
+          <span>${escapeHtml(job.format)}</span>
+          <span>${job.is_playlist ? 'playlist' : 'single'}</span>
+          ${job.item_count ? `<span>${job.item_count} item${job.item_count === 1 ? '' : 's'}</span>` : ''}
+          ${job.duplicate_used ? '<span>cached</span>' : ''}
+          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${escapeHtml(job.status)}</span>
         </div>
         <div class="progress-container">
           <div class="progress-bar" style="width: ${job.progress || 0}%"></div>
@@ -756,7 +800,7 @@ async function refreshModal() {
   const res = await fetch(`/api/jobs/${modalJobId}/log`);
   const data = await res.json();
   const body = document.getElementById('modal-body');
-  body.innerHTML = data.log.map(l => `<div>${l}</div>`).join('');
+  body.innerHTML = data.log.map(l => `<div>${escapeHtml(l)}</div>`).join('');
   body.scrollTop = body.scrollHeight;
 }
 

@@ -1,13 +1,16 @@
-import os
-import uuid
 import json
+import os
+import re
+import shutil
 import subprocess
 import threading
 import time
-import shutil
-from datetime import datetime, timedelta
+import uuid
+import zipfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, send_from_directory
+
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -15,309 +18,354 @@ CORS(app)
 
 DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/downloads"))
 SERVE_DIR = DOWNLOAD_DIR / "_serve"
+WORK_DIR = DOWNLOAD_DIR / "_work"
 
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-SERVE_DIR.mkdir(parents=True, exist_ok=True)
+for directory in (DOWNLOAD_DIR, SERVE_DIR, WORK_DIR):
+    directory.mkdir(parents=True, exist_ok=True)
 
-# In-memory job store
 jobs = {}
 jobs_lock = threading.Lock()
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+MEDIA_EXTENSIONS = {
+    ".mp3", ".mp4", ".m4a", ".webm", ".mkv", ".opus", ".ogg", ".flac", ".wav", ".aac", ".mov"
+}
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).replace(tzinfo=None).isoformat()
+
 
 def detect_source(url: str) -> str:
-    if "spotify.com" in url:
-        return "spotify"
-    return "yt"
+    return "spotify" if "spotify.com" in url.lower() else "yt"
 
-import re
+
+def infer_mode(url: str) -> str:
+    lowered = url.lower()
+    if any(token in lowered for token in ("list=", "/playlist", "/album", "/show", "/artist")):
+        return "playlist"
+    return "single"
+
+
+def safe_name(value: str, fallback: str = "download") -> str:
+    value = (value or fallback).strip()
+    value = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "_", value)
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    return value[:180] or fallback
+
+
+def is_media_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS
+
+
+def visible_download_files() -> list[Path]:
+    files = []
+    for path in DOWNLOAD_DIR.iterdir():
+        if path.name.startswith("_"):
+            continue
+        if path.is_file() or path.is_dir():
+            files.append(path)
+    return files
+
+
+def find_duplicates(title: str, fmt: str | None = None) -> list[dict]:
+    target = safe_name(title).lower()
+    matches = []
+    if not target:
+        return matches
+
+    for path in visible_download_files():
+        stem = path.stem.lower() if path.is_file() else path.name.lower()
+        same_format = not fmt or path.is_dir() or path.suffix.lower().lstrip(".") == fmt.lower()
+        if same_format and (stem == target or stem.startswith(f"{target}_") or target in stem):
+            matches.append(artifact_response(path, cached=True))
+    return matches
+
+
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    base = path.with_suffix("") if path.is_file() else path
+    suffix = path.suffix if path.is_file() else ""
+    i = 2
+    while True:
+        candidate = Path(f"{base} ({i}){suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def artifact_response(path: Path, cached: bool = False) -> dict:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "path": str(path),
+        "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
+        "cached": cached,
+        "is_archive": path.suffix.lower() == ".zip",
+    }
+
+
+def serializable_job(job: dict) -> dict:
+    clean = {k: v for k, v in job.items() if k != "proc"}
+    clean["download_url"] = f"/api/jobs/{job['id']}/download" if job.get("serve_path") else None
+    return clean
+
 
 def emit(job_id: str, line: str):
+    if not line:
+        return
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return
+        job["log"].append(line)
+        job["last_activity"] = utc_now()
+
+        download_match = re.search(r"\[download\]\s+([0-9]+(?:\.[0-9]+)?)%", line)
+        spotdl_match = re.search(r"([0-9]{1,3})%\|", line)
+        if download_match:
+            job["progress"] = min(float(download_match.group(1)), 99.0)
+        elif spotdl_match:
+            job["progress"] = min(float(spotdl_match.group(1)), 99.0)
+
+        if len(job["log"]) > 1000:
+            job["log"] = job["log"][-1000:]
+
+
+def finish(job_id: str, status: str, **updates):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["status"] = status
+        job["finished_at"] = utc_now()
+        job["last_activity"] = utc_now()
+        if status == "done":
+            job["progress"] = 100
+        job.pop("proc", None)
+
+
+def run_process(job_id: str, cmd: list[str]) -> int:
+    emit(job_id, f"▶ {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     with jobs_lock:
         if job_id in jobs:
-            jobs[job_id]["log"].append(line)
-            jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
-            
-            # Basic progress parsing for yt-dlp
-            # Example: [download]  10.0% of 100.00MiB at 1.00MiB/s ETA 01:30
-            if "[download]" in line and "%" in line:
-                match = re.search(r"(\d+\.\d+)%", line)
-                if match:
-                    jobs[job_id]["progress"] = float(match.group(1))
-            
-            # Basic progress parsing for spotdl
-            # Example: 10%|██        | 1/10 [00:01<00:09, 1.00it/s]
-            elif "%|" in line:
-                match = re.search(r"(\d+)%", line)
-                if match:
-                    jobs[job_id]["progress"] = float(match.group(1))
+            jobs[job_id]["proc"] = proc
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        emit(job_id, line.rstrip())
+    proc.wait()
+    return proc.returncode
 
-            # Keep log size reasonable
-            if len(jobs[job_id]["log"]) > 1000:
-                jobs[job_id]["log"] = jobs[job_id]["log"][-1000:]
-
-def finish(job_id: str, status: str, filename: str | None = None):
-    with jobs_lock:
-        if job_id in jobs:
-            jobs[job_id]["status"] = status
-            jobs[job_id]["finished_at"] = datetime.utcnow().isoformat()
-            jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
-            jobs[job_id]["progress"] = 100 if status == "done" else jobs[job_id].get("progress", 0)
-            if filename:
-                jobs[job_id]["filename"] = filename
-            # Clean up process reference
-            jobs[job_id].pop("proc", None)
 
 def cleanup_job_dir(job_dir: Path):
-    if job_dir.exists():
-        try:
+    try:
+        if job_dir.exists():
             shutil.rmtree(job_dir)
-        except Exception as e:
-            print(f"Error cleaning up {job_dir}: {e}")
+    except Exception as exc:
+        print(f"Error cleaning up {job_dir}: {exc}")
 
-# ── background tasks ─────────────────────────────────────────────────────────
 
-def background_cleanup():
-    """Periodically cleans up old files in SERVE_DIR and old/stuck jobs."""
-    while True:
-        time.sleep(60)  # Check more frequently
-        now = datetime.utcnow()
-        
-        # Clean up SERVE_DIR (files older than 2 hours)
-        try:
-            for f in SERVE_DIR.iterdir():
-                if f.is_file():
-                    mtime = datetime.fromtimestamp(f.stat().st_mtime)
-                    if now - mtime > timedelta(hours=2):
-                        try:
-                            f.unlink()
-                        except:
-                            pass
-        except:
-            pass
+def build_archive(source_dir: Path, archive_title: str) -> Path:
+    zip_path = unique_path(SERVE_DIR / f"{safe_name(archive_title)}.zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(source_dir.rglob("*")):
+            if path.is_file():
+                zf.write(path, path.relative_to(source_dir))
+    return zip_path
 
-        with jobs_lock:
-            to_delete = []
-            for jid, job in jobs.items():
-                # Clean up finished jobs older than 24 hours
-                if job["finished_at"]:
-                    finished_at = datetime.fromisoformat(job["finished_at"])
-                    if now - finished_at > timedelta(hours=24):
-                        to_delete.append(jid)
-                        continue
-                
-                # Mark jobs stuck in "running" as "error" if no activity for 10 mins
-                if job["status"] == "running" and job.get("last_activity"):
-                    last_activity = datetime.fromisoformat(job["last_activity"])
-                    if now - last_activity > timedelta(minutes=10):
-                        job["status"] = "error"
-                        job["log"].append("❌ Job timed out (no activity for 10 minutes)")
-                        job["finished_at"] = now.isoformat()
-            
-            for jid in to_delete:
-                del jobs[jid]
 
-# Start background cleanup
-threading.Thread(target=background_cleanup, daemon=True).start()
+def register_single_artifact(job_id: str, source_file: Path, duplicate_action: str) -> None:
+    final_dest = DOWNLOAD_DIR / source_file.name
+    if final_dest.exists():
+        if duplicate_action == "override":
+            final_dest.unlink()
+        elif duplicate_action == "reuse":
+            serve_copy = SERVE_DIR / final_dest.name
+            shutil.copy2(final_dest, serve_copy)
+            finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest, cached=True)], duplicate_used=True)
+            emit(job_id, f"♻ Reused cached file: {final_dest.name}")
+            return
+        else:
+            final_dest = unique_path(final_dest)
 
-# ── download workers ─────────────────────────────────────────────────────────
+    shutil.move(str(source_file), str(final_dest))
+    serve_copy = SERVE_DIR / final_dest.name
+    shutil.copy2(final_dest, serve_copy)
+    finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest)])
+    emit(job_id, f"✅ Ready for browser download: {final_dest.name}")
 
-def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, embed_metadata: bool = True):
-    job_dir = DOWNLOAD_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
 
+def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate_action: str) -> None:
+    final_dir = DOWNLOAD_DIR / safe_name(title)
+    if final_dir.exists():
+        if duplicate_action == "override":
+            shutil.rmtree(final_dir)
+        elif duplicate_action == "reuse":
+            zip_path = build_archive(final_dir, final_dir.name)
+            finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir, cached=True), artifact_response(zip_path)], duplicate_used=True, is_playlist=True)
+            emit(job_id, f"♻ Reused cached playlist: {final_dir.name}")
+            return
+        else:
+            final_dir = unique_path(final_dir)
+
+    shutil.move(str(job_dir), str(final_dir))
+    zip_path = build_archive(final_dir, final_dir.name)
+    finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir), artifact_response(zip_path)], is_playlist=True)
+    emit(job_id, f"✅ Playlist/archive ready for browser download: {zip_path.name}")
+
+
+def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicate_action: str) -> None:
+    media_files = [p for p in job_dir.rglob("*") if is_media_file(p)]
+    if not media_files:
+        emit(job_id, "❌ No downloadable media files were produced")
+        finish(job_id, "error")
+        return
+
+    is_playlist = mode == "playlist" or len(media_files) > 1
     with jobs_lock:
-        job_title = jobs[job_id].get("title", "download")
-        jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
-        jobs[job_id]["progress"] = 0
+        if job_id in jobs:
+            jobs[job_id]["is_playlist"] = is_playlist
+            jobs[job_id]["item_count"] = len(media_files)
+
+    if is_playlist:
+        register_playlist_artifact(job_id, job_dir, title, duplicate_action)
+    else:
+        register_single_artifact(job_id, media_files[0], duplicate_action)
+
+
+def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, duplicate_action: str) -> bool:
+    if duplicate_action != "reuse":
+        return False
+    matches = find_duplicates(title, fmt)
+    if not matches:
+        return False
+    path = Path(matches[0]["path"])
+    if path.is_dir():
+        zip_path = build_archive(path, path.name)
+        finish(job_id, "done", filename=str(path), serve_path=str(zip_path), artifacts=[matches[0], artifact_response(zip_path)], duplicate_used=True, is_playlist=True)
+    else:
+        serve_copy = SERVE_DIR / path.name
+        shutil.copy2(path, serve_copy)
+        finish(job_id, "done", filename=str(path), serve_path=str(serve_copy), artifacts=[matches[0]], duplicate_used=True, is_playlist=False)
+    emit(job_id, f"♻ Reused cached download: {path.name}")
+    return True
+
+
+def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicate_action: str, embed_metadata: bool = True):
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            cleanup_job_dir(job_dir)
+            return
+        title = job.get("title") or "download"
+        job["progress"] = 0
+        job["last_activity"] = utc_now()
 
     try:
-        # Base command - removed --no-playlist
+        if apply_duplicate_policy_before_start(job_id, title, fmt, duplicate_action):
+            return
+
+        output_template = str(job_dir / "%(title).200B [%(id)s].%(ext)s")
         cmd = [
-            "yt-dlp", 
-            "--newline", 
-            "--progress", 
-            "-o", str(job_dir / "%(title)s.%(ext)s")
+            "yt-dlp", "--newline", "--progress", "--no-part", "--restrict-filenames",
+            "--windows-filenames", "--print", "before_dl:%(title)s", "-o", output_template,
         ]
+        if mode == "single":
+            cmd.append("--no-playlist")
+        elif mode == "playlist":
+            cmd.append("--yes-playlist")
 
         if embed_metadata:
-            cmd += ["--embed-metadata", "--embed-thumbnail", "--embed-subs", "--embed-chapters"]
+            cmd += ["--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"]
 
-        # Format logic
         if fmt == "mp3":
             cmd += ["-x", "--audio-format", "mp3", "--audio-quality", quality]
         elif fmt == "mp4":
-            cmd += ["-f", f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]", "--merge-output-format", "mp4"]
+            cmd += ["-f", f"bv*[height<={quality}]+ba/b[height<={quality}]/b", "--merge-output-format", "mp4"]
         elif fmt == "opus":
             cmd += ["-x", "--audio-format", "opus"]
         else:
-            cmd += ["-f", "bestaudio/best"]
-
+            cmd += ["-f", "bv*+ba/b"]
         cmd.append(url)
 
-        emit(job_id, f"▶ Running yt-dlp: {' '.join(cmd)}")
-        
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            with jobs_lock:
-                if job_id in jobs:
-                    jobs[job_id]["proc"] = proc
-            for line in proc.stdout:
-                emit(job_id, line.rstrip())
-            proc.wait()
-        except Exception as e:
-            emit(job_id, f"❌ Process error: {str(e)}")
+        code = run_process(job_id, cmd)
+        if code != 0:
+            emit(job_id, f"❌ yt-dlp exited with code {code}")
             finish(job_id, "error")
             return
-
-        if proc.returncode != 0:
-            emit(job_id, f"❌ yt-dlp exited with code {proc.returncode}")
-            finish(job_id, "error")
-            return
-
-        files = list(job_dir.iterdir())
-        if not files:
-            emit(job_id, "❌ No files found after download")
-            finish(job_id, "error")
-            return
-
-        if len(files) > 1:
-            # Playlist/Album: Move folder to DOWNLOAD_DIR
-            final_dest_dir = DOWNLOAD_DIR / job_title
-            # Avoid overwriting or mixing with existing folders
-            if final_dest_dir.exists():
-                final_dest_dir = DOWNLOAD_DIR / f"{job_title}_{job_id[:8]}"
-            
-            shutil.move(str(job_dir), str(final_dest_dir))
-            
-            # Create zip for web download
-            import zipfile
-            zip_name = f"{final_dest_dir.name}.zip"
-            zip_path = SERVE_DIR / zip_name
-            with zipfile.ZipFile(zip_path, "w") as zf:
-                for f in final_dest_dir.rglob("*"):
-                    zf.write(f, f.relative_to(final_dest_dir))
-            
-            with jobs_lock:
-                jobs[job_id]["serve_path"] = str(zip_path)
-            finish(job_id, "done", str(final_dest_dir))
-            emit(job_id, f"✅ Saved playlist to volume: {final_dest_dir.name}")
-            emit(job_id, "✅ Zip ready for browser download")
-        else:
-            # Single file
-            output_file = files[0]
-            final_dest = DOWNLOAD_DIR / output_file.name
-            if final_dest.exists():
-                final_dest = DOWNLOAD_DIR / f"{job_id[:8]}_{output_file.name}"
-            
-            output_file.rename(final_dest)
-            
-            # Move copy to serve area for web download
-            serve_copy = SERVE_DIR / final_dest.name
-            shutil.copy2(final_dest, serve_copy)
-            
-            with jobs_lock:
-                jobs[job_id]["serve_path"] = str(serve_copy)
-            finish(job_id, "done", str(final_dest))
-            emit(job_id, f"✅ Saved to volume: {final_dest.name}")
-            emit(job_id, "✅ Ready for browser download")
-
-    except Exception as e:
-        emit(job_id, f"❌ Unexpected error: {str(e)}")
+        finalize_outputs(job_id, job_dir, title, mode, duplicate_action)
+    except Exception as exc:
+        emit(job_id, f"❌ Unexpected yt-dlp error: {exc}")
         finish(job_id, "error")
     finally:
         cleanup_job_dir(job_dir)
 
 
-def run_spotdl(job_id: str, url: str, fmt: str):
-    job_dir = DOWNLOAD_DIR / job_id
+def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str):
+    job_dir = WORK_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-
     with jobs_lock:
-        job_title = jobs[job_id].get("title", "download")
-        jobs[job_id]["last_activity"] = datetime.utcnow().isoformat()
-        jobs[job_id]["progress"] = 0
+        job = jobs.get(job_id)
+        if not job:
+            cleanup_job_dir(job_dir)
+            return
+        title = job.get("title") or "Spotify Media"
+        job["progress"] = 0
+        job["last_activity"] = utc_now()
 
     try:
-        # spotdl command
-        # Fixed: --output should be a template, not just the directory
+        if apply_duplicate_policy_before_start(job_id, title, fmt, duplicate_action):
+            return
+
+        output_template = str(job_dir / "{artists} - {title}.{output-ext}")
         cmd = [
-            "spotdl", 
-            "download", 
-            url, 
-            "--output", str(job_dir / "{title}.{output-ext}"), 
-            "--format", fmt if fmt in ("mp3", "opus", "flac", "ogg") else "mp3"
+            "spotdl", "download", url,
+            "--output", output_template,
+            "--format", fmt if fmt in {"mp3", "opus", "flac", "ogg"} else "mp3",
         ]
-
-        emit(job_id, f"▶ Running spotdl: {' '.join(cmd)}")
-        
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        with jobs_lock:
-            if job_id in jobs:
-                jobs[job_id]["proc"] = proc
-        for line in proc.stdout:
-            emit(job_id, line.rstrip())
-        proc.wait()
-
-        if proc.returncode != 0:
-            emit(job_id, f"❌ spotdl failed with code {proc.returncode}")
+        code = run_process(job_id, cmd)
+        if code != 0:
+            emit(job_id, f"❌ spotdl failed with code {code}")
             finish(job_id, "error")
             return
-
-        files = list(job_dir.iterdir())
-        if not files:
-            emit(job_id, "❌ No files produced by spotdl")
-            finish(job_id, "error")
-            return
-
-        if len(files) > 1:
-            # Playlist/Album: Move folder to DOWNLOAD_DIR
-            final_dest_dir = DOWNLOAD_DIR / job_title
-            if final_dest_dir.exists():
-                final_dest_dir = DOWNLOAD_DIR / f"{job_title}_{job_id[:8]}"
-            
-            shutil.move(str(job_dir), str(final_dest_dir))
-            
-            # Create zip for web download
-            import zipfile
-            zip_name = f"{final_dest_dir.name}.zip"
-            zip_path = SERVE_DIR / zip_name
-            with zipfile.ZipFile(zip_path, "w") as zf:
-                for f in final_dest_dir.rglob("*"):
-                    zf.write(f, f.relative_to(final_dest_dir))
-            
-            with jobs_lock:
-                jobs[job_id]["serve_path"] = str(zip_path)
-            finish(job_id, "done", str(final_dest_dir))
-            emit(job_id, f"✅ Saved playlist to volume: {final_dest_dir.name}")
-            emit(job_id, "✅ Zip ready for browser download")
-        else:
-            # Single file
-            output_file = files[0]
-            final_dest = DOWNLOAD_DIR / output_file.name
-            if final_dest.exists():
-                final_dest = DOWNLOAD_DIR / f"{job_id[:8]}_{output_file.name}"
-            
-            output_file.rename(final_dest)
-            
-            # Move copy to serve area for web download
-            serve_copy = SERVE_DIR / final_dest.name
-            shutil.copy2(final_dest, serve_copy)
-            
-            with jobs_lock:
-                jobs[job_id]["serve_path"] = str(serve_copy)
-            finish(job_id, "done", str(final_dest))
-            emit(job_id, f"✅ Saved to volume: {final_dest.name}")
-            emit(job_id, "✅ Ready for browser download")
-
-    except Exception as e:
-        emit(job_id, f"❌ Unexpected error in spotdl worker: {str(e)}")
+        finalize_outputs(job_id, job_dir, title, mode, duplicate_action)
+    except Exception as exc:
+        emit(job_id, f"❌ Unexpected spotdl error: {exc}")
         finish(job_id, "error")
     finally:
         cleanup_job_dir(job_dir)
 
 
-# ── API routes ────────────────────────────────────────────────────────────────
+def background_cleanup():
+    while True:
+        time.sleep(60)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for directory, max_age in ((SERVE_DIR, timedelta(hours=6)), (WORK_DIR, timedelta(hours=2))):
+            try:
+                for path in directory.iterdir():
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime)
+                    if now - mtime > max_age:
+                        shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        with jobs_lock:
+            for job in jobs.values():
+                if job.get("status") == "running" and job.get("last_activity"):
+                    last_activity = datetime.fromisoformat(job["last_activity"])
+                    if now - last_activity > timedelta(minutes=20):
+                        job["status"] = "error"
+                        job["log"].append("❌ Job timed out (no activity for 20 minutes)")
+                        job["finished_at"] = now.isoformat()
+                        job.pop("proc", None)
+
+
+threading.Thread(target=background_cleanup, daemon=True).start()
+
 
 @app.route("/api/info", methods=["POST"])
 def get_info():
@@ -327,29 +375,33 @@ def get_info():
         return jsonify({"error": "URL is required"}), 400
 
     source = detect_source(url)
+    if source == "spotify":
+        return jsonify({"title": "Spotify Media", "source": source, "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)})
+
     try:
-        # For yt-dlp sources (YouTube, etc)
-        if source == "yt":
-            cmd = ["yt-dlp", "--dump-json", "--flat-playlist", "--no-warnings", url]
-            output = subprocess.check_output(cmd, text=True)
-            
-            # If yt-dlp returns multiple lines (one per entry in playlist/mix),
-            # we just take the first one or try to find a title.
-            lines = [l.strip() for l in output.splitlines() if l.strip()]
-            if not lines:
-                return jsonify({"title": "Unknown Media"})
-            
-            info = json.loads(lines[0])
-            # If it's a playlist, it might have a playlist_title
-            title = info.get("playlist_title") or info.get("title") or "Unknown Title"
-            is_playlist = len(lines) > 1 or ("_type" in info and info["_type"] == "playlist")
-            return jsonify({"title": title, "is_playlist": is_playlist})
-        else:
-            # Fallback for Spotify if yt-dlp info fails or isn't detailed
-            is_playlist = "spotify.com/playlist" in url or "spotify.com/album" in url
-            return jsonify({"title": "Spotify Media", "is_playlist": is_playlist})
-    except Exception as e:
-        return jsonify({"title": "Unknown Media", "error": str(e), "is_playlist": False}), 200
+        cmd = ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings", url]
+        output = subprocess.check_output(cmd, text=True, timeout=30)
+        info = json.loads(output)
+        entries = info.get("entries") or []
+        is_playlist = info.get("_type") == "playlist" or len(entries) > 1
+        return jsonify({
+            "title": info.get("title") or info.get("playlist_title") or "Unknown Title",
+            "source": source,
+            "is_playlist": is_playlist,
+            "item_count": len(entries) if entries else (1 if not is_playlist else None),
+            "mode": "playlist" if is_playlist else "single",
+        })
+    except Exception as exc:
+        return jsonify({"title": "Unknown Media", "source": source, "error": str(exc), "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)}), 200
+
+
+@app.route("/api/duplicates", methods=["POST"])
+def check_duplicates():
+    data = request.json or {}
+    title = data.get("title") or data.get("url") or ""
+    fmt = data.get("format")
+    return jsonify({"duplicates": find_duplicates(title, fmt)})
+
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
@@ -357,15 +409,20 @@ def start_download():
     url = data.get("url", "").strip()
     fmt = data.get("format", "mp3")
     quality = data.get("quality", "192")
-    title = data.get("title", "download").strip()
-    embed_metadata = data.get("embed_metadata", True)
+    source = detect_source(url)
+    mode = data.get("mode") or "auto"
+    if mode == "auto":
+        mode = infer_mode(url)
+    duplicate_action = data.get("duplicate_action", "again")
+    if duplicate_action not in {"again", "override", "reuse"}:
+        duplicate_action = "again"
+    title = safe_name(data.get("title") or ("Spotify Media" if source == "spotify" else "download"))
+    embed_metadata = bool(data.get("embed_metadata", True))
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
 
     job_id = str(uuid.uuid4())
-    source = detect_source(url)
-
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
@@ -374,20 +431,23 @@ def start_download():
             "format": fmt,
             "quality": quality,
             "title": title,
+            "mode": mode,
+            "is_playlist": mode == "playlist",
+            "duplicate_action": duplicate_action,
             "status": "running",
+            "progress": 0,
             "log": [],
             "filename": None,
             "serve_path": None,
-            "started_at": datetime.utcnow().isoformat(),
+            "artifacts": [],
+            "started_at": utc_now(),
             "finished_at": None,
+            "last_activity": utc_now(),
         }
 
-    if source == "spotify":
-        t = threading.Thread(target=run_spotdl, args=(job_id, url, fmt), daemon=True)
-    else:
-        t = threading.Thread(target=run_ytdlp, args=(job_id, url, fmt, quality, embed_metadata), daemon=True)
-    t.start()
-
+    target = run_spotdl if source == "spotify" else run_ytdlp
+    args = (job_id, url, fmt, mode, duplicate_action) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata)
+    threading.Thread(target=target, args=args, daemon=True).start()
     return jsonify({"job_id": job_id}), 202
 
 
@@ -397,59 +457,54 @@ def stop_job(job_id):
         job = jobs.get(job_id)
         if not job:
             return jsonify({"error": "Job not found"}), 404
-        
-        if job["status"] == "running":
-            proc = job.get("proc")
-            if proc:
-                try:
-                    proc.terminate()
-                    job["status"] = "stopped"
-                    job["log"].append("🛑 Job stopped by user")
-                    job["finished_at"] = datetime.utcnow().isoformat()
-                    return jsonify({"ok": True})
-                except Exception as e:
-                    return jsonify({"error": str(e)}), 500
-        
+        proc = job.get("proc")
+        if job["status"] == "running" and proc:
+            try:
+                proc.terminate()
+                job["status"] = "stopped"
+                job["log"].append("🛑 Job stopped by user")
+                job["finished_at"] = utc_now()
+                job.pop("proc", None)
+                return jsonify({"ok": True})
+            except Exception as exc:
+                return jsonify({"error": str(exc)}), 500
     return jsonify({"error": "Job is not running"}), 400
 
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
     with jobs_lock:
-        # Return last 50 jobs
-        return jsonify(list(reversed(list(jobs.values())))[:50])
+        return jsonify([serializable_job(job) for job in reversed(list(jobs.values()))][:50])
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Not found"}), 404
-    return jsonify(job)
+        if not job:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(serializable_job(job))
 
 
 @app.route("/api/jobs/<job_id>/log", methods=["GET"])
 def get_log(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Not found"}), 404
-    return jsonify({"log": job["log"], "status": job["status"]})
+        if not job:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"log": job["log"], "status": job["status"]})
 
 
 @app.route("/api/jobs/<job_id>/download", methods=["GET"])
 def download_file(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job or job["status"] != "done":
-        return jsonify({"error": "Not ready"}), 404
-
-    serve_path = job.get("serve_path")
+        if not job or job["status"] != "done":
+            return jsonify({"error": "Not ready"}), 404
+        serve_path = job.get("serve_path")
     if not serve_path or not Path(serve_path).exists():
         return jsonify({"error": "File not found on disk"}), 404
-
-    return send_file(serve_path, as_attachment=True)
+    return send_file(serve_path, as_attachment=True, download_name=Path(serve_path).name)
 
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
@@ -458,13 +513,11 @@ def delete_job(job_id):
         job = jobs.pop(job_id, None)
     if not job:
         return jsonify({"error": "Not found"}), 404
-    
-    # Clean up serve file if present
-    sp = job.get("serve_path")
-    if sp and Path(sp).exists():
+    serve_path = job.get("serve_path")
+    if serve_path:
         try:
-            Path(sp).unlink(missing_ok=True)
-        except:
+            Path(serve_path).unlink(missing_ok=True)
+        except Exception:
             pass
     return jsonify({"ok": True})
 
@@ -477,25 +530,24 @@ def get_formats():
         "qualities": {
             "mp3": ["128", "192", "256", "320"],
             "mp4": ["480", "720", "1080", "1440", "2160"],
-        }
+        },
+        "modes": ["auto", "single", "playlist"],
+        "duplicate_actions": ["reuse", "again", "override"],
     })
 
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    # Check if tools are available
     try:
-        ytdlp_version = subprocess.check_output(["yt-dlp", "--version"], text=True).strip()
+        ytdlp_version = subprocess.check_output(["yt-dlp", "--version"], text=True, timeout=10).strip()
     except Exception:
         ytdlp_version = "not found"
-    return jsonify({
-        "status": "ok",
-        "ytdlp_version": ytdlp_version,
-        "jobs_count": len(jobs)
-    })
+    try:
+        spotdl_version = subprocess.check_output(["spotdl", "--version"], text=True, timeout=10).strip()
+    except Exception:
+        spotdl_version = "not found"
+    return jsonify({"status": "ok", "ytdlp_version": ytdlp_version, "spotdl_version": spotdl_version, "jobs_count": len(jobs)})
 
-
-# ── SPA fallback ──────────────────────────────────────────────────────────────
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
