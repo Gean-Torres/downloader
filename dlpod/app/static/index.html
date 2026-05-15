@@ -375,22 +375,22 @@
     </svg>
     <div class="logo">DL<span>POD</span></div>
   </div>
-  <div class="header-meta">Media Fetcher • Online</div>
+  <div class="header-meta" data-i18n="header_meta">Media Fetcher • Online</div>
 </header>
 
 <main>
   <div class="panel">
     <div>
-      <div class="section-title">New Download</div>
+      <div class="section-title" data-i18n="new_download">New Download</div>
       <div class="field">
-        <label>URL</label>
-        <input type="text" id="url-input" placeholder="YouTube or Spotify link..."/>
+        <label data-i18n="url_label">URL</label>
+        <input type="text" id="url-input" placeholder="YouTube or Spotify link..." data-i18n-placeholder="url_placeholder"/>
         <div id="url-info" style="margin-top: 4px; font-size: 10px; color: var(--accent); min-height: 14px;"></div>
       </div>
 
       <div class="row">
         <div class="field">
-          <label>Format</label>
+          <label data-i18n="format_label">Format</label>
           <select id="fmt-select">
             <option value="mp3">mp3</option>
             <option value="mp4">mp4</option>
@@ -399,40 +399,40 @@
           </select>
         </div>
         <div class="field" id="quality-field">
-          <label>Quality</label>
+          <label data-i18n="quality_label">Quality</label>
           <select id="quality-select"></select>
         </div>
       </div>
 
       <div class="row">
         <div class="field">
-          <label>Download Mode</label>
+          <label data-i18n="mode_label">Download Mode</label>
           <select id="mode-select">
-            <option value="auto">auto-detect</option>
-            <option value="single">single media</option>
-            <option value="playlist">playlist/album</option>
+            <option value="auto" data-i18n="mode_auto">auto-detect</option>
+            <option value="single" data-i18n="mode_single">single media</option>
+            <option value="playlist" data-i18n="mode_playlist">playlist/album</option>
           </select>
         </div>
         <div class="field">
-          <label>Duplicates</label>
+          <label data-i18n="duplicates_label">Duplicates</label>
           <select id="duplicate-select">
-            <option value="reuse">reuse cached</option>
-            <option value="again">download again</option>
-            <option value="override">override existing</option>
+            <option value="reuse" data-i18n="dup_reuse">reuse cached</option>
+            <option value="again" data-i18n="dup_again">download again</option>
+            <option value="override" data-i18n="dup_override">override existing</option>
           </select>
         </div>
       </div>
 
       <div class="field">
         <div class="toggle-row" style="margin-bottom: 8px;">
-          <span class="toggle-label">Embed Metadata & Thumbnails</span>
+          <span class="toggle-label" data-i18n="embed_label">Embed Metadata & Thumbnails</span>
           <label class="toggle">
             <input type="checkbox" id="embed-toggle" checked>
             <span class="toggle-track"></span>
           </label>
         </div>
         <div class="toggle-row">
-          <span class="toggle-label">Auto-download when ready</span>
+          <span class="toggle-label" data-i18n="autodl_label">Auto-download when ready</span>
           <label class="toggle">
             <input type="checkbox" id="autodl-toggle">
             <span class="toggle-track"></span>
@@ -440,15 +440,15 @@
         </div>
       </div>
 
-      <button type="button" class="btn btn-primary" id="dl-btn">Fetch Media</button>
+      <button type="button" class="btn btn-primary" id="dl-btn" data-i18n="fetch_btn">Fetch Media</button>
     </div>
   </div>
 
   <div class="panel">
     <div>
       <div class="section-title" style="justify-content: space-between;">
-        <span>Active & Recent Jobs</span>
-        <button type="button" class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;">Clear All</button>
+        <span data-i18n="active_jobs">Active & Recent Jobs</span>
+        <button type="button" class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="clear_btn">Clear All</button>
       </div>
       <div class="job-list" id="job-list"></div>
     </div>
@@ -458,7 +458,7 @@
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <div class="modal-header">
-      <span style="font-size: 10px; text-transform: uppercase;">Job Log</span>
+      <span style="font-size: 10px; text-transform: uppercase;" data-i18n="job_log">Job Log</span>
       <button type="button" class="btn btn-ghost" onclick="closeModal()" style="padding: 2px 8px;">✕</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
@@ -466,11 +466,125 @@
 </div>
 
 <footer>
-  <span>DLPOD v1.2</span>
-  <span>yt-dlp + spotdl</span>
+  <span data-i18n="version">DLPOD v1.2</span>
+  <span data-i18n="footer_tech">yt-dlp + spotdl</span>
 </footer>
 
 <script>
+const i18n = {
+  'en': {
+    'header_meta': 'Media Fetcher • Online',
+    'new_download': 'New Download',
+    'url_label': 'URL',
+    'url_placeholder': 'YouTube or Spotify link...',
+    'format_label': 'Format',
+    'quality_label': 'Quality',
+    'mode_label': 'Download Mode',
+    'duplicates_label': 'Duplicates',
+    'embed_label': 'Embed Metadata & Thumbnails',
+    'autodl_label': 'Auto-download when ready',
+    'fetch_btn': 'Fetch Media',
+    'active_jobs': 'Active & Recent Jobs',
+    'clear_btn': 'Clear All',
+    'job_log': 'Job Log',
+    'version': 'DLPOD v1.2',
+    'footer_tech': 'yt-dlp + spotdl',
+    'mode_auto': 'auto-detect',
+    'mode_single': 'single media',
+    'mode_playlist': 'playlist/album',
+    'dup_reuse': 'reuse cached',
+    'dup_again': 'download again',
+    'dup_override': 'override existing',
+    'fetching_info': 'Fetching info...',
+    'info_error': '⚠️ Could not fetch info',
+    'notif_start': 'Download started successfully',
+    'notif_error': 'Download error',
+    'notif_failed': 'failed',
+    'notif_stopped': 'stopped',
+    'notif_partial': 'Partial playlist saved',
+    'notif_reused': 'Reused cached media',
+    'no_jobs': 'No jobs yet',
+    'btn_log': 'Log',
+    'btn_stop': 'Stop',
+    'btn_save': 'Save',
+    'status_done': 'done',
+    'status_error': 'error',
+    'status_stopped': 'stopped',
+    'status_running': 'running',
+    'playlist_label': 'PLAYLIST/ALBUM',
+    'single_label': 'SINGLE'
+  },
+  'pt-BR': {
+    'header_meta': 'Buscador de Mídia • Online',
+    'new_download': 'Novo Download',
+    'url_label': 'URL',
+    'url_placeholder': 'Link do YouTube ou Spotify...',
+    'format_label': 'Formato',
+    'quality_label': 'Qualidade',
+    'mode_label': 'Modo de Download',
+    'duplicates_label': 'Duplicados',
+    'embed_label': 'Incorporar Metadados e Miniaturas',
+    'autodl_label': 'Baixar automaticamente quando pronto',
+    'fetch_btn': 'Buscar Mídia',
+    'active_jobs': 'Tarefas Ativas e Recentes',
+    'clear_btn': 'Limpar Tudo',
+    'job_log': 'Log da Tarefa',
+    'version': 'DLPOD v1.2',
+    'footer_tech': 'yt-dlp + spotdl',
+    'mode_auto': 'auto-detectar',
+    'mode_single': 'mídia única',
+    'mode_playlist': 'playlist/álbum',
+    'dup_reuse': 'reutilizar cache',
+    'dup_again': 'baixar novamente',
+    'dup_override': 'sobrescrever existente',
+    'fetching_info': 'Buscando informações...',
+    'info_error': '⚠️ Não foi possível buscar informações',
+    'notif_start': 'Download iniciado com sucesso',
+    'notif_error': 'Erro no download',
+    'notif_failed': 'falhou',
+    'notif_stopped': 'parado',
+    'notif_partial': 'Playlist parcial salva',
+    'notif_reused': 'Mídia em cache reutilizada',
+    'no_jobs': 'Nenhuma tarefa ainda',
+    'btn_log': 'Log',
+    'btn_stop': 'Parar',
+    'btn_save': 'Salvar',
+    'status_done': 'concluído',
+    'status_error': 'erro',
+    'status_stopped': 'parado',
+    'status_running': 'executando',
+    'playlist_label': 'PLAYLIST/ÁLBUM',
+    'single_label': 'ÚNICO'
+  }
+};
+
+let currentLang = 'en';
+
+function t(key) {
+  const dict = i18n[currentLang] || i18n['en'];
+  return dict[key] || key;
+}
+
+function applyTranslations() {
+  const browserLang = navigator.language || 'en';
+  if (i18n[browserLang]) {
+    currentLang = browserLang;
+  } else {
+    const short = browserLang.split('-')[0];
+    currentLang = i18n[short] ? short : 'en';
+  }
+
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    el.placeholder = t(key);
+  });
+}
+
 let jobs = {};
 let pollInterval = null;
 let modalJobId = null;
@@ -524,7 +638,7 @@ async function fetchTitle() {
     return;
   }
 
-  urlInfo.textContent = 'Fetching info...';
+  urlInfo.textContent = t('fetching_info');
   try {
     const res = await fetch('/api/info', {
       method: 'POST',
@@ -535,7 +649,11 @@ async function fetchTitle() {
     if (data.error) throw new Error(data.error);
     currentTitle = data.title || 'Unknown Media';
     if (data.mode && modeSelect.value === 'auto') modeSelect.dataset.detected = data.mode;
-    const playlistText = data.is_playlist ? ` [PLAYLIST/ALBUM${data.item_count ? ': ' + data.item_count : ''}]` : ' [SINGLE]';
+    
+    const label = data.is_playlist ? t('playlist_label') : t('single_label');
+    const items = data.item_count ? ': ' + data.item_count : '';
+    const playlistText = ` [${label}${items}]`;
+    
     urlInfo.textContent = `▶ ${currentTitle}${playlistText}`;
     if (data.is_playlist) {
       urlInfo.style.color = 'var(--yellow)';
@@ -543,10 +661,10 @@ async function fetchTitle() {
       urlInfo.style.color = 'var(--accent)';
     }
   } catch (e) {
-    urlInfo.textContent = '⚠️ Could not fetch info';
+    urlInfo.textContent = t('info_error');
     urlInfo.style.color = 'var(--accent2)';
     currentTitle = 'download';
-    showNotification(`Info error: ${e.message}`, 'error');
+    showNotification(`${t('info_error')}: ${e.message}`, 'error');
   }
 }
 
@@ -615,6 +733,7 @@ fmtSelect.addEventListener('change', updateQualityVisibility);
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
+  applyTranslations();
   fetchMetadata();
 });
 
@@ -641,13 +760,13 @@ dlBtn.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (data.error) {
-      showNotification(`Download error: ${data.error}`, 'error');
+      showNotification(`${t('notif_error')}: ${data.error}`, 'error');
     } else if (data.job_id) {
       urlInput.value = '';
       urlInfo.textContent = '';
       currentTitle = '';
       fetchJobs();
-      showNotification('Download started successfully');
+      showNotification(t('notif_start'));
     }
   } catch(e) { 
     console.error(e);
@@ -655,7 +774,7 @@ dlBtn.addEventListener('click', async () => {
   }
   finally {
     dlBtn.disabled = false;
-    dlBtn.textContent = 'Fetch Media';
+    dlBtn.textContent = t('fetch_btn');
   }
 });
 
@@ -670,15 +789,16 @@ async function fetchJobs() {
     data.forEach(job => {
       if ((job.status === 'error' || job.status === 'stopped') && !notifiedTerminalJobs.has(job.id)) {
         notifiedTerminalJobs.add(job.id);
-        showNotification(`${job.title || 'Download'} ${job.status === 'error' ? 'failed' : 'stopped'}`, job.status === 'error' ? 'error' : 'warn');
+        const statusText = job.status === 'error' ? t('notif_failed') : t('notif_stopped');
+        showNotification(`${job.title || 'Download'} ${statusText}`, job.status === 'error' ? 'error' : 'warn');
       }
       if (job.status === 'done' && job.partial && !notifiedTerminalJobs.has(job.id)) {
         notifiedTerminalJobs.add(job.id);
-        showNotification(`Partial playlist saved: ${job.title || job.filename || 'download'}`, 'warn');
+        showNotification(`${t('notif_partial')}: ${job.title || job.filename || 'download'}`, 'warn');
       }
       if (job.status === 'done' && job.duplicate_used && !notifiedTerminalJobs.has(job.id)) {
         notifiedTerminalJobs.add(job.id);
-        showNotification(`Reused cached media: ${job.title || job.filename || 'download'}`);
+        showNotification(`${t('notif_reused')}: ${job.title || job.filename || 'download'}`);
       }
     });
     renderJobs(data);
@@ -718,7 +838,7 @@ function startPolling(ms) {
 function renderJobs(list) {
   const container = document.getElementById('job-list');
   if (list.length === 0) {
-    container.innerHTML = '<div style="color:var(--muted); font-size:11px; text-align:center; padding: 20px;">No jobs yet</div>';
+    container.innerHTML = `<div style="color:var(--muted); font-size:11px; text-align:center; padding: 20px;">${t('no_jobs')}</div>`;
     jobs = {};
     return;
   }
@@ -747,25 +867,26 @@ function renderJobs(list) {
     // Only update if something changed
     const old = jobs[job.id] || {};
     if (isNew || old.status !== job.status || old.progress !== job.progress) {
+      const statusLabel = t('status_' + job.status);
       el.className = `job-card ${job.status}`;
       el.innerHTML = `
         <div class="job-info">
           <div class="job-url" title="${escapeHtml(job.filename || job.url)}">${escapeHtml(job.title || job.url)}</div>
           <div style="display: flex; gap: 4px;">
-            <button type="button" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">Log</button>
-            ${job.status === 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">Stop</button>` : ''}
-            ${job.status === 'done' && job.serve_path ? `<a href="/api/jobs/${job.id}/download" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;">Save</a>` : ''}
+            <button type="button" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">${t('btn_log')}</button>
+            ${job.status === 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">${t('btn_stop')}</button>` : ''}
+            ${job.status === 'done' && job.serve_path ? `<a href="/api/jobs/${job.id}/download" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;">${t('btn_save')}</a>` : ''}
             ${job.status !== 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="deleteJob('${job.id}')">✕</button>` : ''}
           </div>
         </div>
         <div class="job-meta">
           <span>${escapeHtml(job.source)}</span>
           <span>${escapeHtml(job.format)}</span>
-          <span>${job.is_playlist ? 'playlist' : 'single'}</span>
+          <span>${job.is_playlist ? t('mode_playlist') : t('mode_single')}</span>
           ${job.item_count ? `<span>${job.item_count} item${job.item_count === 1 ? '' : 's'}</span>` : ''}
-          ${job.duplicate_used ? '<span>cached</span>' : ''}
-          ${job.partial ? '<span style="color: var(--yellow)">partial</span>' : ''}
-          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${escapeHtml(job.status)}</span>
+          ${job.duplicate_used ? `<span>${t('dup_reuse')}</span>` : ''}
+          ${job.partial ? `<span style="color: var(--yellow)">${t('notif_partial')}</span>` : ''}
+          <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${escapeHtml(statusLabel)}</span>
         </div>
         <div class="progress-container">
           <div class="progress-bar" style="width: ${job.progress || 0}%"></div>
