@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -156,3 +157,63 @@ def test_duplicates_endpoint_detects_cached_media(client):
     assert len(duplicates) == 1
     assert duplicates[0]['name'] == 'Example Song.mp3'
     assert duplicates[0]['cached'] is True
+
+
+def make_running_job(job_id='job', mode='playlist'):
+    jobs[job_id] = {
+        'id': job_id,
+        'url': 'https://youtube.com/playlist?list=PLtest',
+        'source': 'yt',
+        'format': 'mp3',
+        'quality': '192',
+        'title': 'Playlist Title',
+        'mode': mode,
+        'is_playlist': mode == 'playlist',
+        'duplicate_action': 'again',
+        'status': 'running',
+        'progress': 0,
+        'log': [],
+        'filename': None,
+        'serve_path': None,
+        'artifacts': [],
+        'partial': False,
+        'started_at': main.utc_now(),
+        'finished_at': None,
+        'last_activity': main.utc_now(),
+    }
+
+
+def test_ytdlp_playlist_uses_ignore_errors(client, monkeypatch):
+    captured = {}
+
+    def fake_run_process(job_id, cmd):
+        captured['cmd'] = cmd
+        return 0
+
+    monkeypatch.setattr(main, 'run_process', fake_run_process)
+    make_running_job()
+
+    main.run_ytdlp('job', 'https://youtube.com/playlist?list=PLtest', 'mp3', '192', 'playlist', 'again')
+
+    assert '--yes-playlist' in captured['cmd']
+    assert '--ignore-errors' in captured['cmd']
+
+
+def test_ytdlp_playlist_nonzero_with_media_saves_partial_archive(client, monkeypatch):
+    def fake_run_process(job_id, cmd):
+        job_dir = main.WORK_DIR / job_id
+        (job_dir / 'Song One [abc].mp3').write_bytes(b'audio')
+        return 1
+
+    monkeypatch.setattr(main, 'run_process', fake_run_process)
+    make_running_job()
+
+    main.run_ytdlp('job', 'https://youtube.com/playlist?list=PLtest', 'mp3', '192', 'playlist', 'again')
+
+    job = jobs['job']
+    assert job['status'] == 'done'
+    assert job['partial'] is True
+    assert job['is_playlist'] is True
+    assert job['item_count'] == 1
+    assert Path(job['serve_path']).suffix == '.zip'
+    assert any('partial playlist archive' in line for line in job['log'])

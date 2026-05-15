@@ -672,6 +672,10 @@ async function fetchJobs() {
         notifiedTerminalJobs.add(job.id);
         showNotification(`${job.title || 'Download'} ${job.status === 'error' ? 'failed' : 'stopped'}`, job.status === 'error' ? 'error' : 'warn');
       }
+      if (job.status === 'done' && job.partial && !notifiedTerminalJobs.has(job.id)) {
+        notifiedTerminalJobs.add(job.id);
+        showNotification(`Partial playlist saved: ${job.title || job.filename || 'download'}`, 'warn');
+      }
       if (job.status === 'done' && job.duplicate_used && !notifiedTerminalJobs.has(job.id)) {
         notifiedTerminalJobs.add(job.id);
         showNotification(`Reused cached media: ${job.title || job.filename || 'download'}`);
@@ -760,6 +764,7 @@ function renderJobs(list) {
           <span>${job.is_playlist ? 'playlist' : 'single'}</span>
           ${job.item_count ? `<span>${job.item_count} item${job.item_count === 1 ? '' : 's'}</span>` : ''}
           ${job.duplicate_used ? '<span>cached</span>' : ''}
+          ${job.partial ? '<span style="color: var(--yellow)">partial</span>' : ''}
           <span style="color: ${job.status === 'done' ? 'var(--green)' : job.status === 'error' ? 'var(--accent2)' : job.status === 'stopped' ? 'var(--muted)' : 'var(--yellow)'}">${escapeHtml(job.status)}</span>
         </div>
         <div class="progress-container">
