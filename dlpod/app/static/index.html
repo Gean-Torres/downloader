@@ -376,6 +376,12 @@
     <div class="logo">DL<span>POD</span></div>
   </div>
   <div class="header-meta" data-i18n="header_meta">Media Fetcher • Online</div>
+  <div style="margin-left: 12px;">
+    <select id="lang-selector" style="width: auto; padding: 2px 4px; font-size: 10px; height: 20px; background: var(--bg); border-color: var(--border);">
+      <option value="en">English</option>
+      <option value="pt-BR">Português (BR)</option>
+    </select>
+  </div>
 </header>
 
 <main>
@@ -566,13 +572,19 @@ function t(key) {
 }
 
 function applyTranslations() {
+  const savedLang = localStorage.getItem('dlpod_lang');
   const browserLang = navigator.language || 'en';
-  if (i18n[browserLang]) {
+  
+  if (savedLang && i18n[savedLang]) {
+    currentLang = savedLang;
+  } else if (i18n[browserLang]) {
     currentLang = browserLang;
   } else {
     const short = browserLang.split('-')[0];
     currentLang = i18n[short] ? short : 'en';
   }
+
+  document.getElementById('lang-selector').value = currentLang;
 
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
@@ -584,6 +596,16 @@ function applyTranslations() {
     el.placeholder = t(key);
   });
 }
+
+document.getElementById('lang-selector').addEventListener('change', (e) => {
+  currentLang = e.target.value;
+  localStorage.setItem('dlpod_lang', currentLang);
+  applyTranslations();
+  
+  // Refresh UI elements that might need immediate re-rendering
+  if (currentTitle) fetchTitle(); 
+  if (Object.keys(jobs).length > 0) fetchJobs();
+});
 
 let jobs = {};
 let pollInterval = null;
