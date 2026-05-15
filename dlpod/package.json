@@ -11,7 +11,8 @@
     "pod:build": "podman build -t dlpod:latest -f app/Containerfile app/",
     "pod:up": "podman kube play dlpod-pod.yaml",
     "pod:down": "podman kube down dlpod-pod.yaml",
-    "pod:rebuild": "npm run pod:build && npm run pod:down && npm run pod:up"
+    "pod:rebuild": "npm run pod:build && npm run pod:down && npm run pod:up",
+    "deploy": "./deploy.sh"
   },
   "keywords": [
     "yt-dlp",
