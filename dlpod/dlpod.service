@@ -4,13 +4,14 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 # Use the Podman kube play approach; it creates and starts the pod from the YAML
 ExecStartPre=-/usr/bin/podman kube down /opt/dlpod/dlpod-pod.yaml
 ExecStart=/usr/bin/podman kube play /opt/dlpod/dlpod-pod.yaml
 ExecStop=/usr/bin/podman kube down /opt/dlpod/dlpod-pod.yaml
-Restart=on-failure
-RestartSec=10
+# Restart=on-failure is less useful for Type=oneshot with RemainAfterExit
+# but you can add it if you want the 'play' command to retry on failure.
 
 # Run as your normal user (rootless Podman)
 # If you want rootless, enable with: systemctl --user enable dlpod
