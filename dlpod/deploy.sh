@@ -34,19 +34,18 @@ sed -e "s|/opt/dlpod/dlpod-pod.yaml|$CONFIG_DIR/dlpod-pod.yaml|g" \
     -e "s|multi-user.target|default.target|g" \
     dlpod.service > "$SERVICE_DIR/dlpod.service"
 
-echo "--- Starting systemd service ---"
+echo "--- Installing systemd service ---"
 systemctl --user daemon-reload
-systemctl --user enable --now dlpod
+systemctl --user disable dlpod || true
+systemctl --user stop dlpod || true
 
 echo ""
 echo "===================================================="
 echo " Deployment Complete!"
 echo "===================================================="
-echo " Web UI:      http://localhost:8765"
-echo " Downloads:   $DOWNLOAD_DIR"
-echo " Service:     systemctl --user status dlpod"
-echo " Logs:        journalctl --user -u dlpod -f"
+echo " The service is currently DISABLED and STOPPED."
+echo ""
+echo " To start it manually:  systemctl --user start dlpod"
+echo " To enable autostart:   systemctl --user enable dlpod"
+echo " Web UI (once started): http://localhost:8765"
 echo "===================================================="
-
-# Show status
-systemctl --user status dlpod --no-pager || true
