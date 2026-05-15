@@ -29,7 +29,16 @@ mkdir -p "$DOWNLOAD_DIR"
 
 echo "--- Patching and installing configuration ---"
 # 1. Patch dlpod-pod.yaml: Set host download path to user's Downloads folder
-sed "s|path: /srv/Downloads/media|path: $DOWNLOAD_DIR|g" dlpod-pod.yaml > "$CONFIG_DIR/dlpod-pod.yaml"
+YAML_PATH="$CONFIG_DIR/dlpod-pod.yaml"
+sed "s|path: /srv/Downloads/media|path: $DOWNLOAD_DIR|g" dlpod-pod.yaml > "$YAML_PATH"
+
+echo "--- Updating running pod ---"
+if $PODMAN_BIN pod exists "$APP_NAME"; then
+    echo "Existing pod found. Replacing..."
+    $PODMAN_BIN pod rm -f "$APP_NAME"
+fi
+echo "Starting pod..."
+$PODMAN_BIN kube play "$YAML_PATH"
 
 if [ "$INSTALL_SYSTEMD" = true ]; then
     echo "--- Installing systemd service ---"
