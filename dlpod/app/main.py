@@ -176,7 +176,7 @@ def build_archive(source_dir: Path, archive_title: str) -> Path:
     return zip_path
 
 
-def register_single_artifact(job_id: str, source_file: Path, duplicate_action: str) -> None:
+def register_single_artifact(job_id: str, source_file: Path, duplicate_action: str, partial: bool = False) -> None:
     final_dest = DOWNLOAD_DIR / source_file.name
     if final_dest.exists():
         if duplicate_action == "override":
@@ -193,11 +193,11 @@ def register_single_artifact(job_id: str, source_file: Path, duplicate_action: s
     shutil.move(str(source_file), str(final_dest))
     serve_copy = SERVE_DIR / final_dest.name
     shutil.copy2(final_dest, serve_copy)
-    finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest)])
+    finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest)], partial=partial)
     emit(job_id, f"✅ Ready for browser download: {final_dest.name}")
 
 
-def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate_action: str) -> None:
+def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate_action: str, partial: bool = False) -> None:
     final_dir = DOWNLOAD_DIR / safe_name(title)
     if final_dir.exists():
         if duplicate_action == "override":
@@ -212,11 +212,11 @@ def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate
 
     shutil.move(str(job_dir), str(final_dir))
     zip_path = build_archive(final_dir, final_dir.name)
-    finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir), artifact_response(zip_path)], is_playlist=True)
+    finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir), artifact_response(zip_path)], is_playlist=True, partial=partial)
     emit(job_id, f"✅ Playlist/archive ready for browser download: {zip_path.name}")
 
 
-def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicate_action: str) -> None:
+def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicate_action: str, partial: bool = False) -> None:
     media_files = [p for p in job_dir.rglob("*") if is_media_file(p)]
     if not media_files:
         emit(job_id, "❌ No downloadable media files were produced")
@@ -230,9 +230,9 @@ def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicat
             jobs[job_id]["item_count"] = len(media_files)
 
     if is_playlist:
-        register_playlist_artifact(job_id, job_dir, title, duplicate_action)
+        register_playlist_artifact(job_id, job_dir, title, duplicate_action, partial=partial)
     else:
-        register_single_artifact(job_id, media_files[0], duplicate_action)
+        register_single_artifact(job_id, media_files[0], duplicate_action, partial=partial)
 
 
 def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, duplicate_action: str) -> bool:
@@ -277,7 +277,7 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         if mode == "single":
             cmd.append("--no-playlist")
         elif mode == "playlist":
-            cmd.append("--yes-playlist")
+            cmd += ["--yes-playlist", "--ignore-errors"]
 
         if embed_metadata:
             cmd += ["--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"]
@@ -294,6 +294,11 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
 
         code = run_process(job_id, cmd)
         if code != 0:
+            media_files = [p for p in job_dir.rglob("*") if is_media_file(p)]
+            if mode == "playlist" and media_files:
+                emit(job_id, f"⚠ yt-dlp exited with code {code}, but {len(media_files)} media file(s) were downloaded. Saving a partial playlist archive.")
+                finalize_outputs(job_id, job_dir, title, mode, duplicate_action, partial=True)
+                return
             emit(job_id, f"❌ yt-dlp exited with code {code}")
             finish(job_id, "error")
             return
@@ -440,6 +445,7 @@ def start_download():
             "filename": None,
             "serve_path": None,
             "artifacts": [],
+            "partial": False,
             "started_at": utc_now(),
             "finished_at": None,
             "last_activity": utc_now(),
