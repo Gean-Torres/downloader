@@ -42,43 +42,32 @@ npm test
 
 ## Build & Deploy (Production)
 
-### 1. Build the image
+### 1. Build & Prepare Configuration
+
+The `deploy.sh` script builds the image and prepares the Kubernetes YAML in your home directory (`~/.config/dlpod/dlpod-pod.yaml`).
 
 ```bash
-cd dlpod/app
-podman build -t dlpod:latest -f Containerfile .
+./deploy.sh
 ```
 
-### 2. Prepare the download directory
+### 2. Deploy via Cockpit Podman (Recommended)
+
+1. Open Cockpit in your browser (usually `https://<server-ip>:9090`).
+2. Navigate to the **Podman containers** (or **Containers**) section.
+3. Click on the dropdown/button to **Create pod** or **Play Kubernetes YAML**.
+4. Point it to the generated file: `~/.config/dlpod/dlpod-pod.yaml`.
+5. Cockpit will create the pod and start the containers.
+
+### 3. Deploy via systemd (Optional)
+
+If you still prefer systemd management:
 
 ```bash
-# Adjust this path to wherever you want files saved
-sudo mkdir -p /srv/Downloads/media
-sudo chown $USER:$USER /srv/Downloads/media
+./deploy.sh --systemd
+systemctl --user enable --now dlpod
 ```
 
-Edit `dlpod-pod.yaml` if needed, but it currently defaults to:
-```yaml
-hostPort: 8765          # port exposed on the host
-path: /srv/Downloads/media  # host path for saved files
-```
-
-### 3. Install files
-
-```bash
-sudo mkdir -p /opt/dlpod
-sudo cp dlpod-pod.yaml /opt/dlpod/
-sudo cp dlpod.service /etc/systemd/system/
-```
-
-### 4. Enable & start
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now dlpod
-```
-
-### 5. Access
+### 4. Access
 
 Open `http://<server-ip>:8765` in your browser.
 
