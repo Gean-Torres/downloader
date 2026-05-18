@@ -65,6 +65,12 @@ def init_db():
                 job["finished_at"] = job.get("last_activity") or utc_now()
             jobs[job["id"]] = job
 
+    # Initial sync with filesystem
+    try:
+        sync_downloads_db()
+    except Exception:
+        pass
+
 
 init_db()
 
@@ -91,6 +97,31 @@ def record_download(url: str, title: str, filename: str, fmt: str, path: str):
             "INSERT OR REPLACE INTO downloads (url, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (url, title, filename, fmt, path, utc_now())
         )
+
+
+def sync_downloads_db():
+    files = visible_download_files()
+    file_paths = {str(p) for p in files}
+
+    with sqlite3.connect(DB_PATH) as conn:
+        # 1. Remove entries for files that no longer exist
+        cursor = conn.execute("SELECT path FROM downloads")
+        db_paths = {row[0] for row in cursor}
+        deleted_paths = db_paths - file_paths
+        if deleted_paths:
+            conn.executemany("DELETE FROM downloads WHERE path = ?", [(p,) for p in deleted_paths])
+
+        # 2. Add files that are not in the DB
+        untracked_paths = file_paths - db_paths
+        for path_str in untracked_paths:
+            path = Path(path_str)
+            # Try to infer some info from filename
+            title = path.stem
+            fmt = path.suffix.lstrip(".") if path.is_file() else "folder"
+            conn.execute(
+                "INSERT INTO downloads (url, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                ("", title, path.name, fmt, path_str, utc_now())
+            )
 
 
 def utc_now() -> str:
@@ -465,7 +496,7 @@ def background_cleanup():
             except Exception:
                 pass
 
-        running_job_ids = []
+        timeout_job_ids = []
         with jobs_lock:
             for job in jobs.values():
                 if job.get("status") == "running":
@@ -476,9 +507,9 @@ def background_cleanup():
                             job["log"].append("❌ Job timed out (no activity for 20 minutes)")
                             job["finished_at"] = now.isoformat()
                             job.pop("proc", None)
-                    running_job_ids.append(job["id"])
+                            timeout_job_ids.append(job["id"])
 
-        for job_id in running_job_ids:
+        for job_id in timeout_job_ids:
             try:
                 save_job_to_db(job_id)
             except Exception:
@@ -550,6 +581,25 @@ def check_duplicates():
     title = data.get("title") or data.get("url") or ""
     fmt = data.get("format")
     return jsonify({"duplicates": find_duplicates(title, fmt)})
+
+
+@app.route("/api/refresh", methods=["POST"])
+def manual_refresh():
+    # Sync downloads from filesystem
+    sync_downloads_db()
+
+    # Save all in-memory jobs to DB
+    job_ids = []
+    with jobs_lock:
+        job_ids = list(jobs.keys())
+
+    for jid in job_ids:
+        try:
+            save_job_to_db(jid)
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "jobs_synced": len(job_ids)})
 
 
 @app.route("/api/download", methods=["POST"])

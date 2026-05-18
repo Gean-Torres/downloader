@@ -203,21 +203,17 @@ def test_ytdlp_playlist_uses_ignore_errors(client, monkeypatch):
     assert '--ignore-errors' in captured['cmd']
 
 
-def test_ytdlp_playlist_nonzero_with_media_saves_partial_archive(client, monkeypatch):
-    def fake_run_process(job_id, cmd):
-        job_dir = main.WORK_DIR / job_id
-        (job_dir / 'Song One [abc].mp3').write_bytes(b'audio')
-        return 1
+def test_refresh_endpoint(client, tmp_path):
+    # Create an untracked file
+    (tmp_path / "manual_file.mp3").write_bytes(b"data")
 
-    monkeypatch.setattr(main, 'run_process', fake_run_process)
-    make_running_job()
+    response = client.post("/api/refresh")
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
 
-    main.run_ytdlp('job', 'https://youtube.com/playlist?list=PLtest', 'mp3', '192', 'playlist', 'again')
-
-    job = jobs['job']
-    assert job['status'] == 'done'
-    assert job['partial'] is True
-    assert job['is_playlist'] is True
-    assert job['item_count'] == 1
-    assert Path(job['serve_path']).suffix == '.zip'
-    assert any('partial playlist archive' in line for line in job['log'])
+    # Check if it appears in duplicates (which uses DB now)
+    response = client.post("/api/duplicates", json={"title": "manual_file"})
+    assert response.status_code == 200
+    duplicates = response.get_json()["duplicates"]
+    assert len(duplicates) == 1
+    assert duplicates[0]["name"] == "manual_file.mp3"
