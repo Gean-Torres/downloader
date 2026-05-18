@@ -122,6 +122,12 @@
 
   body.effects-enabled .ambient-grid { opacity: 0.36; animation: gridDrift 28s linear infinite; }
   @keyframes gridDrift { to { transform: translate3d(52px, 52px, 0); } }
+  .weather-layer { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; opacity: 0; transition: opacity 0.25s ease; }
+  .weather-layer.active { opacity: 1; }
+  .weather-particle { position: absolute; top: -8%; border-radius: 999px; opacity: 0.9; animation: fallDown linear infinite; }
+  .weather-particle.snow { background: rgba(255,255,255,0.85); box-shadow: 0 0 6px rgba(255,255,255,0.35); }
+  .weather-particle.rain { width: 2px !important; border-radius: 2px; background: linear-gradient(180deg, rgba(170, 220, 255, 0.15), rgba(170, 220, 255, 0.95)); }
+  @keyframes fallDown { to { transform: translate3d(var(--drift, 0), 120vh, 0); } }
 
   header {
     position: sticky;
@@ -340,6 +346,7 @@
 <body>
 
 <div class="ambient-grid" aria-hidden="true"></div>
+<div class="weather-layer" id="weather-layer" aria-hidden="true"></div>
 <div id="notif-container"></div>
 
 <header>
@@ -466,6 +473,16 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="player-modal-overlay">
+  <div class="modal" style="max-width: 900px;">
+    <div class="modal-header">
+      <span style="font-size: 10px; text-transform: uppercase;" id="player-title" data-i18n="player_title">Media Player</span>
+      <button type="button" class="btn btn-ghost" onclick="closePlayerModal()" style="padding: 2px 8px;">✕</button>
+    </div>
+    <div class="modal-body" id="player-modal-body" style="background: var(--surface); color: var(--text);"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="settings-modal-overlay">
   <div class="modal" style="max-width: 480px;">
     <div class="modal-header">
@@ -495,6 +512,15 @@
             <input type="checkbox" id="effects-toggle">
             <span class="toggle-track"></span>
           </label>
+        </div>
+        <div class="field" style="margin-bottom: 0;">
+          <label for="weather-select" data-i18n="weather_label">Weather FX</label>
+          <select id="weather-select">
+            <option value="none" data-i18n="weather_none">Off</option>
+            <option value="snow" data-i18n="weather_snow">Snow</option>
+            <option value="rain" data-i18n="weather_rain">Rain</option>
+          </select>
+          <div class="settings-note" data-i18n="weather_note">Weather effects only run when animations are enabled.</div>
         </div>
       </div>
     </div>
@@ -567,7 +593,15 @@ const i18n = {
     'theme_purple': 'Purple',
     'theme_green': 'Green',
     'effects_label': 'Animations & rich visual effects',
-    'effects_note': 'Off by default to save CPU/GPU. Enable for glowing backgrounds, animated gradients, and motion polish.'
+    'effects_note': 'Off by default to save CPU/GPU. Enable for glowing backgrounds, animated gradients, and motion polish.',
+    'weather_label': 'Weather FX',
+    'weather_none': 'Off',
+    'weather_snow': 'Snow',
+    'weather_rain': 'Rain',
+    'weather_note': 'Weather effects only run when animations are enabled.',
+    'btn_play': 'Play',
+    'player_title': 'Media Player',
+    'not_playable': 'Preview unavailable for this file type'
   },
   'pt-BR': {
     'header_meta': 'Buscador de Mídia • Online',
@@ -627,7 +661,15 @@ const i18n = {
     'theme_purple': 'Roxo',
     'theme_green': 'Verde',
     'effects_label': 'Animações e efeitos visuais avançados',
-    'effects_note': 'Desativado por padrão para economizar CPU/GPU. Ative para brilhos, gradientes animados e movimentos refinados.'
+    'effects_note': 'Desativado por padrão para economizar CPU/GPU. Ative para brilhos, gradientes animados e movimentos refinados.',
+    'weather_label': 'Efeito Clima',
+    'weather_none': 'Desligado',
+    'weather_snow': 'Neve',
+    'weather_rain': 'Chuva',
+    'weather_note': 'Os efeitos de clima só rodam quando as animações estão ativadas.',
+    'btn_play': 'Reproduzir',
+    'player_title': 'Player de Mídia',
+    'not_playable': 'Prévia indisponível para este tipo de arquivo'
   }
 };
 
@@ -692,6 +734,27 @@ const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal-overlay');
 const themeSelect = document.getElementById('theme-select');
 const effectsToggle = document.getElementById('effects-toggle');
+const weatherSelect = document.getElementById('weather-select');
+const weatherLayer = document.getElementById('weather-layer');
+
+
+function rebuildWeatherParticles(effect) {
+  weatherLayer.innerHTML = '';
+  if (effect === 'none') return;
+  const count = effect === 'snow' ? 65 : 95;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('span');
+    p.className = `weather-particle ${effect}`;
+    const size = effect === 'snow' ? 1.8 + Math.random() * 4.4 : 10 + Math.random() * 22;
+    p.style.left = `${Math.random() * 100}%`;
+    p.style.animationDelay = `${Math.random() * -12}s`;
+    p.style.animationDuration = `${effect === 'snow' ? 9 + Math.random() * 12 : 0.7 + Math.random() * 0.9}s`;
+    p.style.setProperty('--drift', effect === 'snow' ? `${-30 + Math.random() * 60}px` : `${-8 + Math.random() * 16}px`);
+    p.style.width = effect === 'snow' ? `${size}px` : '2px';
+    p.style.height = `${size}px`;
+    weatherLayer.appendChild(p);
+  }
+}
 
 function applyTheme(theme) {
   const nextTheme = theme || 'dark';
@@ -704,12 +767,24 @@ function applyEffects(enabled) {
   document.body.classList.toggle('effects-enabled', enabled);
   effectsToggle.checked = enabled;
   localStorage.setItem('dlpod_effects_enabled', enabled ? '1' : '0');
+  applyWeather(weatherSelect.value);
+}
+
+function applyWeather(effect) {
+  const selected = effect || 'none';
+  weatherSelect.value = selected;
+  localStorage.setItem('dlpod_weather_fx', selected);
+  const canAnimate = effectsToggle.checked && selected !== 'none';
+  weatherLayer.classList.toggle('active', canAnimate);
+  if (canAnimate) rebuildWeatherParticles(selected);
+  else weatherLayer.innerHTML = '';
 }
 
 function initAppearance() {
   applyTheme(localStorage.getItem('dlpod_theme') || 'dark');
   // Resource-consuming effects are intentionally off by default.
   applyEffects(localStorage.getItem('dlpod_effects_enabled') === '1');
+  applyWeather(localStorage.getItem('dlpod_weather_fx') || 'none');
 }
 
 function openSettingsModal() {
@@ -723,6 +798,7 @@ function closeSettingsModal() {
 settingsBtn.addEventListener('click', openSettingsModal);
 themeSelect.addEventListener('change', (e) => applyTheme(e.target.value));
 effectsToggle.addEventListener('change', (e) => applyEffects(e.target.checked));
+weatherSelect.addEventListener('change', (e) => applyWeather(e.target.value));
 settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettingsModal();
 });
@@ -1070,6 +1146,8 @@ const filesBtn = document.getElementById('files-btn');
 const filesModal = document.getElementById('files-modal-overlay');
 const filesList = document.getElementById('files-list');
 const refreshFilesBtn = document.getElementById('refresh-files-btn');
+const playerModal = document.getElementById('player-modal-overlay');
+const playerModalBody = document.getElementById('player-modal-body');
 
 filesBtn.addEventListener('click', () => {
   filesModal.classList.add('open');
@@ -1133,12 +1211,32 @@ function renderFiles(files) {
             <span>${new Date(file.mtime).toLocaleString()}</span>
           </div>
         </div>
-        <a href="/api/download-direct?name=${encodeURIComponent(file.name)}" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px; text-decoration: none;">
-          ${t('btn_save')}
-        </a>
+        <div style="display:flex; gap:6px;">
+          <a href="/api/download-direct?name=${encodeURIComponent(file.name)}" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px; text-decoration: none;">
+            ${t('btn_save')}
+          </a>
+          ${file.is_dir ? '' : `<button type="button" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px;" onclick="openPlayer('${encodeURIComponent(file.name)}')">${t('btn_play')}</button>`}
+        </div>
       </div>
     `;
   }).join('');
+}
+
+function closePlayerModal() {
+  playerModal.classList.remove('open');
+  playerModalBody.innerHTML = '';
+}
+
+function openPlayer(encodedName) {
+  const name = decodeURIComponent(encodedName);
+  const ext = (name.toLowerCase().split('.').pop() || '');
+  const src = `/api/download-direct?name=${encodeURIComponent(name)}`;
+  let html = `<div style="font-size: 12px; margin-bottom: 12px; color: var(--muted);">${escapeHtml(name)}</div>`;
+  if (['mp3','m4a','opus','ogg','flac','wav','aac'].includes(ext)) html += `<audio controls style="width:100%;" src="${src}"></audio>`;
+  else if (['mp4','webm','mkv','mov'].includes(ext)) html += `<video controls style="width:100%; max-height:62vh; border-radius:8px; background:#000;" src="${src}"></video>`;
+  else html += `<div style="color: var(--yellow); font-size: 12px;">${t('not_playable')}</div>`;
+  playerModalBody.innerHTML = html;
+  playerModal.classList.add('open');
 }
 
 startPolling(2000);
