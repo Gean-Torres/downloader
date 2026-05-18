@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -17,10 +18,12 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
 DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/downloads"))
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 SERVE_DIR = DOWNLOAD_DIR / "_serve"
 WORK_DIR = DOWNLOAD_DIR / "_work"
+DB_PATH = DATA_DIR / "dlpod.db"
 
-for directory in (DOWNLOAD_DIR, SERVE_DIR, WORK_DIR):
+for directory in (DOWNLOAD_DIR, SERVE_DIR, WORK_DIR, DATA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 jobs = {}
@@ -29,6 +32,65 @@ jobs_lock = threading.Lock()
 MEDIA_EXTENSIONS = {
     ".mp3", ".mp4", ".m4a", ".webm", ".mkv", ".opus", ".ogg", ".flac", ".wav", ".aac", ".mov"
 }
+
+
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                data TEXT,
+                updated_at TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS downloads (
+                url TEXT,
+                title TEXT,
+                filename TEXT,
+                format TEXT,
+                path TEXT PRIMARY KEY,
+                created_at TEXT
+            )
+        """)
+
+    # Load recent jobs into memory
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute("SELECT data FROM jobs ORDER BY updated_at ASC")
+        for row in cursor:
+            job = json.loads(row[0])
+            if job.get("status") == "running":
+                job["status"] = "error"
+                job["log"].append("❌ Job interrupted by system restart")
+                job["finished_at"] = job.get("last_activity") or utc_now()
+            jobs[job["id"]] = job
+
+
+init_db()
+
+
+def save_job_to_db(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return
+        # Don't save the process object
+        data = {k: v for k, v in job.items() if k != "proc"}
+        updated_at = data.get("last_activity") or utc_now()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO jobs (id, data, updated_at) VALUES (?, ?, ?)",
+            (job_id, json.dumps(data), updated_at)
+        )
+
+
+def record_download(url: str, title: str, filename: str, fmt: str, path: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO downloads (url, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (url, title, filename, fmt, path, utc_now())
+        )
 
 
 def utc_now() -> str:
@@ -73,7 +135,24 @@ def find_duplicates(title: str, fmt: str | None = None) -> list[dict]:
     if not target:
         return matches
 
+    # Check database for historical downloads first
+    with sqlite3.connect(DB_PATH) as conn:
+        query = "SELECT path FROM downloads WHERE (LOWER(title) LIKE ? OR LOWER(filename) LIKE ?)"
+        params = [f"%{target}%", f"%{target}%"]
+        if fmt:
+            query += " AND format = ?"
+            params.append(fmt)
+
+        cursor = conn.execute(query, params)
+        for row in cursor:
+            path = Path(row[0])
+            if path.exists():
+                matches.append(artifact_response(path, cached=True))
+
+    # Also check filesystem for untracked files
     for path in visible_download_files():
+        if any(str(path) == m["path"] for m in matches):
+            continue
         stem = path.stem.lower() if path.is_file() else path.name.lower()
         same_format = not fmt or path.is_dir() or path.suffix.lower().lstrip(".") == fmt.lower()
         if same_format and (stem == target or stem.startswith(f"{target}_") or target in stem):
@@ -144,6 +223,7 @@ def finish(job_id: str, status: str, **updates):
         if status == "done":
             job["progress"] = 100
         job.pop("proc", None)
+    save_job_to_db(job_id)
 
 
 def run_process(job_id: str, cmd: list[str]) -> int:
@@ -193,6 +273,13 @@ def register_single_artifact(job_id: str, source_file: Path, duplicate_action: s
     shutil.move(str(source_file), str(final_dest))
     serve_copy = SERVE_DIR / final_dest.name
     shutil.copy2(final_dest, serve_copy)
+
+    # Record download to DB
+    with jobs_lock:
+        job = jobs.get(job_id, {})
+        url, title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
+    record_download(url, title, final_dest.name, fmt, str(final_dest))
+
     finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest)], partial=partial)
     emit(job_id, f"✅ Ready for browser download: {final_dest.name}")
 
@@ -212,6 +299,13 @@ def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate
 
     shutil.move(str(job_dir), str(final_dir))
     zip_path = build_archive(final_dir, final_dir.name)
+
+    # Record download to DB
+    with jobs_lock:
+        job = jobs.get(job_id, {})
+        url, job_title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
+    record_download(url, job_title or title, final_dir.name, fmt, str(final_dir))
+
     finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir), artifact_response(zip_path)], is_playlist=True, partial=partial)
     emit(job_id, f"✅ Playlist/archive ready for browser download: {zip_path.name}")
 
@@ -332,6 +426,19 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
             "--output", output_template,
             "--format", fmt if fmt in {"mp3", "opus", "flac", "ogg"} else "mp3",
         ]
+
+        # Pass credentials if available in environment
+        client_id = os.environ.get("SPOTIPY_CLIENT_ID")
+        client_secret = os.environ.get("SPOTIPY_CLIENT_SECRET")
+        genius_token = os.environ.get("GENIUS_ACCESS_TOKEN")
+
+        if client_id:
+            cmd += ["--client-id", client_id]
+        if client_secret:
+            cmd += ["--client-secret", client_secret]
+        if genius_token:
+            cmd += ["--genius-access-token", genius_token]
+
         code = run_process(job_id, cmd)
         if code != 0:
             emit(job_id, f"❌ spotdl failed with code {code}")
@@ -358,15 +465,24 @@ def background_cleanup():
             except Exception:
                 pass
 
+        running_job_ids = []
         with jobs_lock:
             for job in jobs.values():
-                if job.get("status") == "running" and job.get("last_activity"):
-                    last_activity = datetime.fromisoformat(job["last_activity"])
-                    if now - last_activity > timedelta(minutes=20):
-                        job["status"] = "error"
-                        job["log"].append("❌ Job timed out (no activity for 20 minutes)")
-                        job["finished_at"] = now.isoformat()
-                        job.pop("proc", None)
+                if job.get("status") == "running":
+                    if job.get("last_activity"):
+                        last_activity = datetime.fromisoformat(job["last_activity"])
+                        if now - last_activity > timedelta(minutes=20):
+                            job["status"] = "error"
+                            job["log"].append("❌ Job timed out (no activity for 20 minutes)")
+                            job["finished_at"] = now.isoformat()
+                            job.pop("proc", None)
+                    running_job_ids.append(job["id"])
+
+        for job_id in running_job_ids:
+            try:
+                save_job_to_db(job_id)
+            except Exception:
+                pass
 
 
 threading.Thread(target=background_cleanup, daemon=True).start()
@@ -381,6 +497,34 @@ def get_info():
 
     source = detect_source(url)
     if source == "spotify":
+        try:
+            cmd = ["spotdl", "save", url, "--save-file", "-"]
+            client_id = os.environ.get("SPOTIPY_CLIENT_ID")
+            client_secret = os.environ.get("SPOTIPY_CLIENT_SECRET")
+            if client_id:
+                cmd += ["--client-id", client_id]
+            if client_secret:
+                cmd += ["--client-secret", client_secret]
+
+            # Use a longer timeout for info fetching as spotdl can be slow
+            output = subprocess.check_output(cmd, text=True, timeout=60)
+            json_start = output.find("[")
+            if json_start != -1:
+                metadata = json.loads(output[json_start:])
+                if metadata:
+                    entry = metadata[0]
+                    # Prefer list_name (playlist/album) if available, otherwise Song Name
+                    title = entry.get("list_name") or f"{entry.get('artist')} - {entry.get('name')}"
+                    return jsonify({
+                        "title": title,
+                        "source": source,
+                        "is_playlist": infer_mode(url) == "playlist",
+                        "item_count": len(metadata),
+                        "mode": infer_mode(url)
+                    })
+        except Exception as exc:
+            app.logger.error(f"Failed to fetch Spotify metadata: {exc}")
+
         return jsonify({"title": "Spotify Media", "source": source, "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)})
 
     try:
@@ -450,6 +594,7 @@ def start_download():
             "finished_at": None,
             "last_activity": utc_now(),
         }
+    save_job_to_db(job_id)
 
     target = run_spotdl if source == "spotify" else run_ytdlp
     args = (job_id, url, fmt, mode, duplicate_action) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata)
@@ -471,10 +616,12 @@ def stop_job(job_id):
                 job["log"].append("🛑 Job stopped by user")
                 job["finished_at"] = utc_now()
                 job.pop("proc", None)
-                return jsonify({"ok": True})
             except Exception as exc:
                 return jsonify({"error": str(exc)}), 500
-    return jsonify({"error": "Job is not running"}), 400
+        else:
+            return jsonify({"error": "Job is not running"}), 400
+    save_job_to_db(job_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/jobs", methods=["GET"])
@@ -519,6 +666,10 @@ def delete_job(job_id):
         job = jobs.pop(job_id, None)
     if not job:
         return jsonify({"error": "Not found"}), 404
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
     serve_path = job.get("serve_path")
     if serve_path:
         try:

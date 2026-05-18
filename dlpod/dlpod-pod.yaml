@@ -15,9 +15,19 @@ spec:
       env:
         - name: DOWNLOAD_DIR
           value: /downloads
+        - name: DATA_DIR
+          value: /data
+        - name: SPOTIPY_CLIENT_ID
+          value: "YOUR_CLIENT_ID"
+        - name: SPOTIPY_CLIENT_SECRET
+          value: "YOUR_CLIENT_SECRET"
+        - name: GENIUS_ACCESS_TOKEN
+          value: "YOUR_GENIUS_TOKEN"
       volumeMounts:
         - mountPath: /downloads
           name: downloads-vol
+        - mountPath: /data
+          name: data-vol
       resources:
         limits:
           memory: 1Gi
@@ -28,5 +38,9 @@ spec:
       hostPath:
         # point this at your host path
         path: /srv/Downloads/media
+        type: DirectoryOrCreate
+    - name: data-vol
+      hostPath:
+        path: /opt/dlpod
         type: DirectoryOrCreate
   restartPolicy: Always

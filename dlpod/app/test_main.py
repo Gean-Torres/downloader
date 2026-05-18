@@ -14,8 +14,12 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'DOWNLOAD_DIR', tmp_path)
     monkeypatch.setattr(main, 'SERVE_DIR', tmp_path / '_serve')
     monkeypatch.setattr(main, 'WORK_DIR', tmp_path / '_work')
+    monkeypatch.setattr(main, 'DATA_DIR', tmp_path / 'data')
+    monkeypatch.setattr(main, 'DB_PATH', tmp_path / 'data' / 'dlpod.db')
     main.SERVE_DIR.mkdir(parents=True, exist_ok=True)
     main.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    main.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    main.init_db()
     jobs.clear()
     with app.test_client() as client:
         yield client

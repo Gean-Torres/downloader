@@ -28,9 +28,22 @@ mkdir -p "$CONFIG_DIR"
 mkdir -p "$DOWNLOAD_DIR"
 
 echo "--- Patching and installing configuration ---"
-# 1. Patch dlpod-pod.yaml: Set host download path to user's Downloads folder
+# 1. Patch dlpod-pod.yaml: Set host download path and API credentials
 YAML_PATH="$CONFIG_DIR/dlpod-pod.yaml"
-sed "s|path: /srv/Downloads/media|path: $DOWNLOAD_DIR|g" dlpod-pod.yaml > "$YAML_PATH"
+SPOTDL_CONFIG="$HOME/.config/spotdl/config.json"
+
+# Extract credentials if they exist
+if [ -f "$SPOTDL_CONFIG" ]; then
+    CLIENT_ID=$(grep -oP '"client_id":\s*"\K[^"]+' "$SPOTDL_CONFIG" || echo "")
+    CLIENT_SECRET=$(grep -oP '"client_secret":\s*"\K[^"]+' "$SPOTDL_CONFIG" || echo "")
+    GENIUS_TOKEN=$(grep -oP '"genius_token":\s*"\K[^"]+' "$SPOTDL_CONFIG" || echo "")
+fi
+
+sed -e "s|path: /srv/Downloads/media|path: $DOWNLOAD_DIR|g" \
+    -e "s|YOUR_CLIENT_ID|${CLIENT_ID:-}|g" \
+    -e "s|YOUR_CLIENT_SECRET|${CLIENT_SECRET:-}|g" \
+    -e "s|YOUR_GENIUS_TOKEN|${GENIUS_TOKEN:-}|g" \
+    dlpod-pod.yaml > "$YAML_PATH"
 
 echo "--- Updating running pod ---"
 if $PODMAN_BIN pod exists "$APP_NAME"; then

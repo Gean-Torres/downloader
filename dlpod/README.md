@@ -40,6 +40,33 @@ This will start the Flask server on `http://127.0.0.1:5000` and watch for any ch
 npm test
 ```
 
+## Spotify & Genius Credentials
+
+To avoid rate-limiting issues, this application requires your own Spotify and Genius API credentials.
+
+### How it works
+The `deploy.sh` script automatically looks for your existing `spotdl` configuration on your host at:
+`~/.config/spotdl/config.json`
+
+If found, it extracts your `client_id`, `client_secret`, and `genius_token` and injects them into the container environment.
+
+### Manual Setup
+If you don't have a local `spotdl` config, you can manually add your credentials to the `env` section of `dlpod-pod.yaml`:
+
+```yaml
+      env:
+        - name: SPOTIPY_CLIENT_ID
+          value: "your_id_here"
+        - name: SPOTIPY_CLIENT_SECRET
+          value: "your_secret_here"
+        - name: GENIUS_ACCESS_TOKEN
+          value: "your_token_here"
+```
+
+You can obtain these credentials from:
+- **Spotify:** [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+- **Genius:** [Genius API Documentation](https://genius.com/api-clients)
+
 ## Build & Deploy (Production)
 
 ### 1. Build & Prepare Configuration
@@ -118,7 +145,6 @@ location /dlpod/ {
 - Files NOT saved to volume are served directly to the browser and stored
   temporarily under `DOWNLOAD_DIR/_serve/` — they are NOT auto-cleaned yet;
   add a cron `find /srv/dlpod/downloads/_serve -mtime +1 -delete` if needed.
-- Spotify downloads require a valid internet connection and use YouTube Music
-  as the audio source (no Spotify credentials needed).
+- Spotify downloads require your own API credentials to avoid rate-limiting (see the "Spotify & Genius Credentials" section).
 - Update yt-dlp regularly — it breaks often as sites change:
   `podman exec dlpod-dlpod-app pip install -U yt-dlp`
