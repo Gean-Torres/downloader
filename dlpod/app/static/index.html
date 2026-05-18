@@ -540,7 +540,8 @@ const i18n = {
     'files_btn': 'Files',
     'all_files': 'All Downloaded Files',
     'refresh_btn': 'Refresh',
-    'no_files': 'No files found in download directory'
+    'no_files': 'No files found in download directory',
+    'folder_warn': 'FOLDER (ZIPS ON DOWNLOAD)'
   },
   'pt-BR': {
     'header_meta': 'Buscador de Mídia • Online',
@@ -586,7 +587,8 @@ const i18n = {
     'files_btn': 'Arquivos',
     'all_files': 'Todos os Arquivos Baixados',
     'refresh_btn': 'Atualizar',
-    'no_files': 'Nenhum arquivo encontrado no diretório de downloads'
+    'no_files': 'Nenhum arquivo encontrado no diretório de downloads',
+    'folder_warn': 'PASTA (SERÁ COMPACTADA)'
   }
 };
 
@@ -1027,21 +1029,27 @@ function renderFiles(files) {
     return;
   }
 
-  filesList.innerHTML = files.map(file => `
-    <div style="background: var(--surface); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
-      <div style="display: flex; flex-direction: column; gap: 2px; overflow: hidden; max-width: 70%;">
-        <div style="font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(file.name)}">
-          ${file.is_dir ? '📁 ' : '📄 '}${escapeHtml(file.name)}
+  filesList.innerHTML = files.map(file => {
+    const ext = file.is_dir ? '' : file.name.split('.').pop().toUpperCase();
+    return `
+      <div style="background: var(--surface); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
+        <div style="display: flex; flex-direction: column; gap: 2px; overflow: hidden; max-width: 70%;">
+          <div style="font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(file.name)}">
+            ${file.is_dir ? '📁 ' : '📄 '}${escapeHtml(file.name)}
+          </div>
+          <div style="font-size: 9px; color: var(--muted); text-transform: uppercase; display: flex; gap: 6px; align-items: center;">
+            ${file.is_dir ? `<span style="color: var(--yellow); font-weight: bold;">${t('folder_warn')}</span>` : `<span style="background: var(--border2); color: var(--accent); padding: 0 4px; border-radius: 2px;">${ext}</span>`}
+            <span>${formatSize(file.size)}</span>
+            <span>•</span>
+            <span>${new Date(file.mtime).toLocaleString()}</span>
+          </div>
         </div>
-        <div style="font-size: 9px; color: var(--muted); text-transform: uppercase;">
-          ${formatSize(file.size)} • ${new Date(file.mtime).toLocaleString()}
-        </div>
+        <a href="/api/download-direct?name=${encodeURIComponent(file.name)}" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px; text-decoration: none;">
+          ${t('btn_save')}
+        </a>
       </div>
-      <a href="/api/download-direct?name=${encodeURIComponent(file.name)}" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px; text-decoration: none;">
-        ${t('btn_save')}
-      </a>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 startPolling(2000);
