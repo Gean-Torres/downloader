@@ -1029,13 +1029,23 @@ function renderFiles(files) {
     return;
   }
 
+  const getIcon = (file) => {
+    if (file.is_dir) return '📁';
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (['mp3', 'm4a', 'opus', 'ogg', 'flac', 'wav', 'aac'].includes(ext)) return '🎵';
+    if (['mp4', 'webm', 'mkv', 'mov'].includes(ext)) return '🎬';
+    if (ext === 'zip') return '📦';
+    return '📄';
+  };
+
   filesList.innerHTML = files.map(file => {
     const ext = file.is_dir ? '' : file.name.split('.').pop().toUpperCase();
+    const icon = getIcon(file);
     return `
       <div style="background: var(--surface); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
         <div style="display: flex; flex-direction: column; gap: 2px; overflow: hidden; max-width: 70%;">
           <div style="font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(file.name)}">
-            ${file.is_dir ? '📁 ' : '📄 '}${escapeHtml(file.name)}
+            ${icon} ${escapeHtml(file.name)}
           </div>
           <div style="font-size: 9px; color: var(--muted); text-transform: uppercase; display: flex; gap: 6px; align-items: center;">
             ${file.is_dir ? `<span style="color: var(--yellow); font-weight: bold;">${t('folder_warn')}</span>` : `<span style="background: var(--border2); color: var(--accent); padding: 0 4px; border-radius: 2px;">${ext}</span>`}
