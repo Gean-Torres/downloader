@@ -710,6 +710,48 @@ def download_file(job_id):
     return send_file(serve_path, as_attachment=True, download_name=Path(serve_path).name)
 
 
+@app.route("/api/files", methods=["GET"])
+def list_all_files():
+    files = []
+    for path in visible_download_files():
+        stat = path.stat()
+        files.append({
+            "name": path.name,
+            "is_dir": path.is_dir(),
+            "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
+            "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    # Sort by mtime descending
+    files.sort(key=lambda x: x["mtime"], reverse=True)
+    return jsonify(files)
+
+
+@app.route("/api/download-direct", methods=["GET"])
+def download_direct():
+    name = request.args.get("name")
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    
+    # Security: prevent path traversal
+    safe_path = (DOWNLOAD_DIR / name).resolve()
+    if not str(safe_path).startswith(str(DOWNLOAD_DIR.resolve())) or not safe_path.exists():
+        return jsonify({"error": "Invalid file path"}), 403
+
+    if safe_path.is_file():
+        # Copy to SERVE_DIR to allow gunicorn/flask to serve it without blocking main dir
+        # or just serve directly if we trust it. Let's serve directly for simplicity but 
+        # normally we'd copy to serve_dir to manage lifecycle.
+        # Actually, let's copy to SERVE_DIR so it can be cleaned up by background_cleanup
+        dest = SERVE_DIR / safe_path.name
+        if not dest.exists():
+            shutil.copy2(safe_path, dest)
+        return send_file(dest, as_attachment=True, download_name=dest.name)
+    else:
+        # It's a directory, zip it
+        zip_path = build_archive(safe_path, safe_path.name)
+        return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
+
+
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
     with jobs_lock:
