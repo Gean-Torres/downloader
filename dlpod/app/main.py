@@ -8,7 +8,10 @@ import threading
 import time
 import uuid
 import zipfile
+import shlex
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -145,6 +148,43 @@ def safe_name(value: str, fallback: str = "download") -> str:
     value = re.sub(r"\s+", " ", value).strip(" .")
     return value[:180] or fallback
 
+
+
+
+def generated_download_title(source: str) -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return safe_name(f"{source}-{timestamp}")
+
+
+def fetch_page_title(url: str, timeout: int = 8) -> str | None:
+    try:
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=timeout) as response:
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if "text/html" not in content_type:
+                return None
+            raw = response.read(200000).decode("utf-8", errors="ignore")
+        match = re.search(r"<title[^>]*>(.*?)</title>", raw, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            return None
+        title = re.sub(r"\s+", " ", match.group(1)).strip()
+        return safe_name(title) if title else None
+    except Exception:
+        return None
+
+
+def resolve_job_title(url: str, source: str, preferred: str | None = None) -> str:
+    if preferred:
+        cleaned = safe_name(preferred, fallback="").strip()
+        if cleaned:
+            return cleaned
+
+    page_title = fetch_page_title(url)
+    if page_title:
+        return page_title
+
+    host = (urlparse(url).hostname or source or "download").split(":")[0]
+    return generated_download_title(host)
 
 def is_media_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS
@@ -321,24 +361,21 @@ def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate
         if duplicate_action == "override":
             shutil.rmtree(final_dir)
         elif duplicate_action == "reuse":
-            zip_path = build_archive(final_dir, final_dir.name)
-            finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir, cached=True), artifact_response(zip_path)], duplicate_used=True, is_playlist=True)
-            emit(job_id, f"♻ Reused cached playlist: {final_dir.name}")
+            finish(job_id, "done", filename=str(final_dir), serve_path=None, artifacts=[artifact_response(final_dir, cached=True)], duplicate_used=True, is_playlist=True)
+            emit(job_id, f"♻ Reused cached playlist folder: {final_dir.name}")
             return
         else:
             final_dir = unique_path(final_dir)
 
     shutil.move(str(job_dir), str(final_dir))
-    zip_path = build_archive(final_dir, final_dir.name)
 
-    # Record download to DB
     with jobs_lock:
         job = jobs.get(job_id, {})
         url, job_title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
     record_download(url, job_title or title, final_dir.name, fmt, str(final_dir))
 
-    finish(job_id, "done", filename=str(final_dir), serve_path=str(zip_path), artifacts=[artifact_response(final_dir), artifact_response(zip_path)], is_playlist=True, partial=partial)
-    emit(job_id, f"✅ Playlist/archive ready for browser download: {zip_path.name}")
+    finish(job_id, "done", filename=str(final_dir), serve_path=None, artifacts=[artifact_response(final_dir)], is_playlist=True, partial=partial)
+    emit(job_id, f"✅ Playlist folder saved: {final_dir.name}")
 
 
 def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicate_action: str, partial: bool = False) -> None:
@@ -368,8 +405,7 @@ def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, dupli
         return False
     path = Path(matches[0]["path"])
     if path.is_dir():
-        zip_path = build_archive(path, path.name)
-        finish(job_id, "done", filename=str(path), serve_path=str(zip_path), artifacts=[matches[0], artifact_response(zip_path)], duplicate_used=True, is_playlist=True)
+        finish(job_id, "done", filename=str(path), serve_path=None, artifacts=[matches[0]], duplicate_used=True, is_playlist=True)
     else:
         serve_copy = SERVE_DIR / path.name
         shutil.copy2(path, serve_copy)
@@ -378,7 +414,7 @@ def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, dupli
     return True
 
 
-def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicate_action: str, embed_metadata: bool = True):
+def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicate_action: str, embed_metadata: bool = True, advanced: dict | None = None):
     job_dir = WORK_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     with jobs_lock:
@@ -407,6 +443,12 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         if embed_metadata:
             cmd += ["--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"]
 
+        advanced = advanced or {}
+        if advanced.get("write_subs"):
+            cmd += ["--write-subs", "--sub-langs", "all"]
+        if advanced.get("rate_limit"):
+            cmd += ["--limit-rate", str(advanced["rate_limit"]) ]
+
         if fmt == "mp3":
             cmd += ["-x", "--audio-format", "mp3", "--audio-quality", quality]
         elif fmt == "mp4":
@@ -415,13 +457,16 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
             cmd += ["-x", "--audio-format", "opus"]
         else:
             cmd += ["-f", "bv*+ba/b"]
+        extra_args = advanced.get("extra_args") if isinstance(advanced, dict) else ""
+        if extra_args:
+            cmd += shlex.split(extra_args)
         cmd.append(url)
 
         code = run_process(job_id, cmd)
         if code != 0:
             media_files = [p for p in job_dir.rglob("*") if is_media_file(p)]
             if mode == "playlist" and media_files:
-                emit(job_id, f"⚠ yt-dlp exited with code {code}, but {len(media_files)} media file(s) were downloaded. Saving a partial playlist archive.")
+                emit(job_id, f"⚠ yt-dlp exited with code {code}, but {len(media_files)} media file(s) were downloaded. Saving partial playlist folder.")
                 finalize_outputs(job_id, job_dir, title, mode, duplicate_action, partial=True)
                 return
             emit(job_id, f"❌ yt-dlp exited with code {code}")
@@ -435,7 +480,7 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         cleanup_job_dir(job_dir)
 
 
-def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str):
+def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str, advanced: dict | None = None):
     job_dir = WORK_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     with jobs_lock:
@@ -457,6 +502,15 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
             "--output", output_template,
             "--format", fmt if fmt in {"mp3", "opus", "flac", "ogg"} else "mp3",
         ]
+        advanced = advanced or {}
+        if advanced.get("bitrate"):
+            cmd += ["--bitrate", str(advanced["bitrate"])]
+        if advanced.get("threads"):
+            cmd += ["--threads", str(advanced["threads"])]
+        if advanced.get("audio_provider"):
+            cmd += ["--audio", str(advanced["audio_provider"])]
+        if advanced.get("yt_dlp_args"):
+            cmd += ["--yt-dlp-args", str(advanced["yt_dlp_args"])]
 
         # Pass credentials if available in environment
         client_id = os.environ.get("SPOTIPY_CLIENT_ID")
@@ -556,7 +610,7 @@ def get_info():
         except Exception as exc:
             app.logger.error(f"Failed to fetch Spotify metadata: {exc}")
 
-        return jsonify({"title": "Spotify Media", "source": source, "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)})
+        return jsonify({"title": resolve_job_title(url, source), "source": source, "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)})
 
     try:
         cmd = ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings", url]
@@ -565,14 +619,14 @@ def get_info():
         entries = info.get("entries") or []
         is_playlist = info.get("_type") == "playlist" or len(entries) > 1
         return jsonify({
-            "title": info.get("title") or info.get("playlist_title") or "Unknown Title",
+            "title": resolve_job_title(url, source, info.get("title") or info.get("playlist_title")),
             "source": source,
             "is_playlist": is_playlist,
             "item_count": len(entries) if entries else (1 if not is_playlist else None),
             "mode": "playlist" if is_playlist else "single",
         })
     except Exception as exc:
-        return jsonify({"title": "Unknown Media", "source": source, "error": str(exc), "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)}), 200
+        return jsonify({"title": resolve_job_title(url, source), "source": source, "error": str(exc), "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)}), 200
 
 
 @app.route("/api/duplicates", methods=["POST"])
@@ -615,8 +669,9 @@ def start_download():
     duplicate_action = data.get("duplicate_action", "again")
     if duplicate_action not in {"again", "override", "reuse"}:
         duplicate_action = "again"
-    title = safe_name(data.get("title") or ("Spotify Media" if source == "spotify" else "download"))
+    title = resolve_job_title(url, source, data.get("title"))
     embed_metadata = bool(data.get("embed_metadata", True))
+    advanced = data.get("advanced") if isinstance(data.get("advanced"), dict) else {}
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -647,7 +702,7 @@ def start_download():
     save_job_to_db(job_id)
 
     target = run_spotdl if source == "spotify" else run_ytdlp
-    args = (job_id, url, fmt, mode, duplicate_action) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata)
+    args = (job_id, url, fmt, mode, duplicate_action, advanced) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata, advanced)
     threading.Thread(target=target, args=args, daemon=True).start()
     return jsonify({"job_id": job_id}), 202
 
@@ -747,9 +802,10 @@ def download_direct():
             shutil.copy2(safe_path, dest)
         return send_file(dest, as_attachment=True, download_name=dest.name)
     else:
-        # It's a directory, zip it
-        zip_path = build_archive(safe_path, safe_path.name)
-        return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
+        if request.args.get("zip", "").lower() in {"1", "true", "yes"}:
+            zip_path = build_archive(safe_path, safe_path.name)
+            return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
+        return jsonify({"error": "Directory downloads are disabled by default. Request zip=true to download an archive."}), 400
 
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
