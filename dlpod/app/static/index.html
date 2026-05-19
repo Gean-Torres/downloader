@@ -430,6 +430,28 @@
         </div>
       </div>
 
+
+      <div class="field">
+        <div class="toggle-row" style="margin-bottom: 8px;">
+          <span class="toggle-label">Advanced Mode</span>
+          <label class="toggle">
+            <input type="checkbox" id="advanced-toggle">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div id="advanced-fields" style="display:none; gap:8px; flex-direction:column;">
+          <input type="text" id="adv-rate-limit" placeholder="yt-dlp rate limit (e.g. 2M)" />
+          <input type="text" id="adv-extra-args" placeholder="yt-dlp extra args" />
+          <div class="row">
+            <input type="text" id="adv-spotdl-bitrate" placeholder="spotdl bitrate (e.g. 192k)" />
+            <input type="text" id="adv-spotdl-threads" placeholder="spotdl threads" />
+          </div>
+          <input type="text" id="adv-spotdl-audio" placeholder="spotdl audio provider (youtube-music)" />
+          <input type="text" id="adv-spotdl-ytdlp" placeholder="spotdl --yt-dlp-args" />
+          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="adv-write-subs" /> Write subtitles (yt-dlp)</label>
+        </div>
+      </div>
+
       <button type="button" class="btn btn-primary" id="dl-btn" data-i18n="fetch_btn">Fetch Media</button>
     </div>
   </div>
@@ -440,6 +462,7 @@
         <span data-i18n="active_jobs">Active & Recent Jobs</span>
         <div style="display: flex; gap: 8px;">
           <button type="button" class="btn btn-ghost" id="files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="files_btn">Files</button>
+          <a class="btn btn-ghost" id="media-link" style="padding: 2px 8px; font-size: 9px; text-decoration: none;" href="https://copyparty.server.lan/Downloads/media/" target="_blank" rel="noopener" data-i18n="media_link">Media Folder</a>
           <button type="button" class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="clear_btn">Clear All</button>
         </div>
       </div>
@@ -548,6 +571,7 @@ const i18n = {
     'autodl_label': 'Auto-download when ready',
     'fetch_btn': 'Fetch Media',
     'active_jobs': 'Active & Recent Jobs',
+    'media_link': 'Media Folder',
     'clear_btn': 'Clear All',
     'job_log': 'Job Log',
     'footer_dev': 'Developed by: Gean Torres',
@@ -616,6 +640,7 @@ const i18n = {
     'autodl_label': 'Baixar automaticamente quando pronto',
     'fetch_btn': 'Buscar Mídia',
     'active_jobs': 'Tarefas Ativas e Recentes',
+    'media_link': 'Pasta de Mídia',
     'clear_btn': 'Limpar Tudo',
     'job_log': 'Log da Tarefa',
     'footer_dev': 'Desenvolvido por: Gean Torres',
@@ -736,6 +761,8 @@ const themeSelect = document.getElementById('theme-select');
 const effectsToggle = document.getElementById('effects-toggle');
 const weatherSelect = document.getElementById('weather-select');
 const weatherLayer = document.getElementById('weather-layer');
+const advancedToggle = document.getElementById('advanced-toggle');
+const advancedFields = document.getElementById('advanced-fields');
 
 
 function rebuildWeatherParticles(effect) {
@@ -803,6 +830,73 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettingsModal();
 });
 
+
+
+const SETTINGS_KEY = 'dlpod_settings_v1';
+
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(next) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+}
+
+function getDefaultFormatForSource(source) {
+  return source === 'spotify' ? 'mp3' : 'best';
+}
+
+function getDefaultQualityForFormat(fmt, qualities) {
+  if (!qualities || !qualities.length) return '';
+  if (fmt === 'mp4') return qualities.includes('720') ? '720' : (qualities[0] || '720');
+  if (fmt === 'mp3') return qualities.includes('192') ? '192' : (qualities[0] || '192');
+  return qualities[qualities.length - 1];
+}
+
+function rememberCurrentSelections() {
+  const source = getSource(urlInput.value.trim());
+  const settings = loadSettings();
+  settings.last = settings.last || {};
+  settings.bySource = settings.bySource || {};
+  settings.last.mode = modeSelect.value;
+  settings.last.duplicate_action = duplicateSelect.value;
+  settings.last.embed_metadata = !!embedToggle.checked;
+  settings.last.autodownload = !!autodlToggle.checked;
+  settings.last.advanced_enabled = !!advancedToggle.checked;
+  settings.last.adv_rate_limit = document.getElementById('adv-rate-limit').value;
+  settings.last.adv_extra_args = document.getElementById('adv-extra-args').value;
+  settings.last.adv_spotdl_bitrate = document.getElementById('adv-spotdl-bitrate').value;
+  settings.last.adv_spotdl_threads = document.getElementById('adv-spotdl-threads').value;
+  settings.last.adv_spotdl_audio = document.getElementById('adv-spotdl-audio').value;
+  settings.last.adv_spotdl_ytdlp = document.getElementById('adv-spotdl-ytdlp').value;
+  settings.last.adv_write_subs = !!document.getElementById('adv-write-subs').checked;
+  settings.bySource[source] = settings.bySource[source] || {};
+  settings.bySource[source].format = fmtSelect.value;
+  settings.bySource[source].quality = qualSelect.value;
+  saveSettings(settings);
+}
+
+function applyRememberedSelections() {
+  const settings = loadSettings();
+  const last = settings.last || {};
+  if (typeof last.embed_metadata === 'boolean') embedToggle.checked = last.embed_metadata;
+  if (typeof last.autodownload === 'boolean') autodlToggle.checked = last.autodownload;
+  if (last.mode && [...modeSelect.options].some(o => o.value === last.mode)) modeSelect.value = last.mode;
+  if (last.duplicate_action && [...duplicateSelect.options].some(o => o.value === last.duplicate_action)) duplicateSelect.value = last.duplicate_action;
+  advancedToggle.checked = !!last.advanced_enabled;
+  advancedFields.style.display = advancedToggle.checked ? 'flex' : 'none';
+  document.getElementById('adv-rate-limit').value = last.adv_rate_limit || '';
+  document.getElementById('adv-extra-args').value = last.adv_extra_args || '';
+  document.getElementById('adv-spotdl-bitrate').value = last.adv_spotdl_bitrate || '';
+  document.getElementById('adv-spotdl-threads').value = last.adv_spotdl_threads || '';
+  document.getElementById('adv-spotdl-audio').value = last.adv_spotdl_audio || '';
+  document.getElementById('adv-spotdl-ytdlp').value = last.adv_spotdl_ytdlp || '';
+  document.getElementById('adv-write-subs').checked = !!last.adv_write_subs;
+}
 
 let currentTitle = '';
 let infoTimeout = null;
@@ -887,16 +981,21 @@ function updateFormats() {
   const url = urlInput.value.trim();
   const source = getSource(url);
   const currentFmt = fmtSelect.value;
-  
+  const settings = loadSettings();
+  const rememberedFmt = settings.bySource?.[source]?.format;
+  const defaultFmt = getDefaultFormatForSource(source);
+
   while (fmtSelect.options.length) fmtSelect.remove(0);
-  
+
   const options = formatsMetadata[source] || [];
-    
   options.forEach(fmt => fmtSelect.add(new Option(fmt, fmt)));
-  
-  // Try to restore previous format if it still exists
-  if ([...fmtSelect.options].some(o => o.value === currentFmt)) {
+
+  if ([...fmtSelect.options].some(o => o.value === rememberedFmt)) {
+    fmtSelect.value = rememberedFmt;
+  } else if ([...fmtSelect.options].some(o => o.value === currentFmt)) {
     fmtSelect.value = currentFmt;
+  } else if ([...fmtSelect.options].some(o => o.value === defaultFmt)) {
+    fmtSelect.value = defaultFmt;
   }
   updateQualityVisibility();
 }
@@ -919,11 +1018,16 @@ function updateQualityVisibility() {
       qualSelect.add(new Option(label, v));
     });
 
-    if ([...qualSelect.options].some(o => o.value === currentVal)) {
+    const source = getSource(urlInput.value.trim());
+    const settings = loadSettings();
+    const rememberedQuality = settings.bySource?.[source]?.quality;
+
+    if ([...qualSelect.options].some(o => o.value === rememberedQuality)) {
+      qualSelect.value = rememberedQuality;
+    } else if ([...qualSelect.options].some(o => o.value === currentVal)) {
       qualSelect.value = currentVal;
     } else {
-      // Default quality
-      qualSelect.value = fmt === 'mp4' ? '720' : qualities[1] || qualities[0];
+      qualSelect.value = getDefaultQualityForFormat(fmt, qualities);
     }
   }
 }
@@ -933,12 +1037,19 @@ urlInput.addEventListener('input', () => {
   clearTimeout(infoTimeout);
   infoTimeout = setTimeout(fetchTitle, 800);
 });
-fmtSelect.addEventListener('change', updateQualityVisibility);
+fmtSelect.addEventListener('change', () => { updateQualityVisibility(); rememberCurrentSelections(); });
+qualSelect.addEventListener('change', rememberCurrentSelections);
+modeSelect.addEventListener('change', rememberCurrentSelections);
+duplicateSelect.addEventListener('change', rememberCurrentSelections);
+embedToggle.addEventListener('change', rememberCurrentSelections);
+autodlToggle.addEventListener('change', rememberCurrentSelections);
+advancedToggle.addEventListener('change', () => { advancedFields.style.display = advancedToggle.checked ? 'flex' : 'none'; rememberCurrentSelections(); });
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
   initAppearance();
   applyTranslations();
+  applyRememberedSelections();
   fetchMetadata();
 });
 
@@ -946,6 +1057,7 @@ dlBtn.addEventListener('click', async () => {
   const url = urlInput.value.trim();
   if (!url) return;
 
+  rememberCurrentSelections();
   dlBtn.disabled = true;
   dlBtn.textContent = '...';
 
@@ -960,7 +1072,16 @@ dlBtn.addEventListener('click', async () => {
         title: currentTitle || 'download',
         embed_metadata: embedToggle.checked,
         mode: modeSelect.value,
-        duplicate_action: duplicateSelect.value
+        duplicate_action: duplicateSelect.value,
+        advanced: advancedToggle.checked ? {
+          rate_limit: document.getElementById('adv-rate-limit').value.trim(),
+          extra_args: document.getElementById('adv-extra-args').value.trim(),
+          bitrate: document.getElementById('adv-spotdl-bitrate').value.trim(),
+          threads: document.getElementById('adv-spotdl-threads').value.trim(),
+          audio_provider: document.getElementById('adv-spotdl-audio').value.trim(),
+          yt_dlp_args: document.getElementById('adv-spotdl-ytdlp').value.trim(),
+          write_subs: document.getElementById('adv-write-subs').checked
+        } : {}
       }),
     });
     const data = await res.json();
