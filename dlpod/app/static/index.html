@@ -433,22 +433,22 @@
 
       <div class="field">
         <div class="toggle-row" style="margin-bottom: 8px;">
-          <span class="toggle-label">Advanced Mode</span>
+          <span class="toggle-label" data-i18n="advanced_mode">Advanced Mode</span>
           <label class="toggle">
             <input type="checkbox" id="advanced-toggle">
             <span class="toggle-track"></span>
           </label>
         </div>
         <div id="advanced-fields" style="display:none; gap:8px; flex-direction:column;">
-          <input type="text" id="adv-rate-limit" placeholder="yt-dlp rate limit (e.g. 2M)" />
-          <input type="text" id="adv-extra-args" placeholder="yt-dlp extra args" />
+          <input type="text" id="adv-rate-limit" data-i18n-placeholder="adv_rate_limit" placeholder="yt-dlp rate limit (e.g. 2M)" />
+          <input type="text" id="adv-extra-args" data-i18n-placeholder="adv_extra_args" placeholder="yt-dlp extra args" />
           <div class="row">
-            <input type="text" id="adv-spotdl-bitrate" placeholder="spotdl bitrate (e.g. 192k)" />
-            <input type="text" id="adv-spotdl-threads" placeholder="spotdl threads" />
+            <input type="text" id="adv-spotdl-bitrate" data-i18n-placeholder="adv_bitrate" placeholder="spotdl bitrate (e.g. 192k)" />
+            <input type="text" id="adv-spotdl-threads" data-i18n-placeholder="adv_threads" placeholder="spotdl threads" />
           </div>
-          <input type="text" id="adv-spotdl-audio" placeholder="spotdl audio provider (youtube-music)" />
-          <input type="text" id="adv-spotdl-ytdlp" placeholder="spotdl --yt-dlp-args" />
-          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="adv-write-subs" /> Write subtitles (yt-dlp)</label>
+          <input type="text" id="adv-spotdl-audio" data-i18n-placeholder="adv_audio_provider" placeholder="spotdl audio provider (youtube-music)" />
+          <input type="text" id="adv-spotdl-ytdlp" data-i18n-placeholder="adv_ytdlp_args" placeholder="spotdl --yt-dlp-args" />
+          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="adv-write-subs" /> <span data-i18n="adv_write_subs">Write subtitles (yt-dlp)</span></label>
         </div>
       </div>
 
@@ -625,7 +625,15 @@ const i18n = {
     'weather_note': 'Weather effects only run when animations are enabled.',
     'btn_play': 'Play',
     'player_title': 'Media Player',
-    'not_playable': 'Preview unavailable for this file type'
+    'not_playable': 'Preview unavailable for this file type',
+    'advanced_mode': 'Advanced Mode',
+    'adv_rate_limit': 'yt-dlp rate limit (e.g. 2M)',
+    'adv_extra_args': 'yt-dlp extra args',
+    'adv_bitrate': 'spotdl bitrate (e.g. 192k)',
+    'adv_threads': 'spotdl threads',
+    'adv_audio_provider': 'spotdl audio provider (youtube-music)',
+    'adv_ytdlp_args': 'spotdl --yt-dlp-args',
+    'adv_write_subs': 'Write subtitles (yt-dlp)'
   },
   'pt-BR': {
     'header_meta': 'Buscador de Mídia • Online',
@@ -694,7 +702,15 @@ const i18n = {
     'weather_note': 'Os efeitos de clima só rodam quando as animações estão ativadas.',
     'btn_play': 'Reproduzir',
     'player_title': 'Player de Mídia',
-    'not_playable': 'Prévia indisponível para este tipo de arquivo'
+    'not_playable': 'Prévia indisponível para este tipo de arquivo',
+    'advanced_mode': 'Modo Avançado',
+    'adv_rate_limit': 'Limite de taxa yt-dlp (ex: 2M)',
+    'adv_extra_args': 'Argumentos extras yt-dlp',
+    'adv_bitrate': 'Bitrate spotdl (ex: 192k)',
+    'adv_threads': 'Threads spotdl',
+    'adv_audio_provider': 'Provedor de áudio spotdl (youtube-music)',
+    'adv_ytdlp_args': 'spotdl --yt-dlp-args',
+    'adv_write_subs': 'Baixar legendas (yt-dlp)'
   }
 };
 
