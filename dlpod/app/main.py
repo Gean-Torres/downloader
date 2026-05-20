@@ -111,13 +111,13 @@ def save_job_to_db(job_id: str):
         )
 
 
-def log_admin_event(client_id: str | None, filename: str):
+def log_admin_event(client_id: str | None, filename: str, url: str):
     log_path = DATA_DIR / "downloads.log"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ip = request.remote_addr if request else "unknown"
     client_short = (client_id[:8] if client_id else "unknown")
     
-    log_line = f"[{timestamp}] IP: {ip} | User: {client_short} | File: {filename}\n"
+    log_line = f"[{timestamp}] IP: {ip} | User: {client_short} | URL: {url} | File: {filename}\n"
     try:
         with open(log_path, "a") as f:
             f.write(log_line)
@@ -131,7 +131,7 @@ def record_download(url: str, client_id: str | None, title: str, filename: str, 
             "INSERT OR REPLACE INTO downloads (url, client_id, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (url, client_id, title, filename, fmt, path, utc_now())
         )
-    log_admin_event(client_id, filename)
+    log_admin_event(client_id, filename, url)
 
 
 def sync_downloads_db():
