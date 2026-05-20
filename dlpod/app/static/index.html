@@ -1268,7 +1268,7 @@ function renderJobs(list) {
     }
   });
 
-  list.forEach(job => {
+  list.forEach((job, index) => {
     let el = document.querySelector(`[data-id="${job.id}"]`);
     const isNew = !el;
     
@@ -1276,10 +1276,14 @@ function renderJobs(list) {
       el = document.createElement('div');
       el.className = `job-card ${job.status}`;
       el.dataset.id = job.id;
-      container.appendChild(el);
     }
 
-    // Only update if something changed
+    // Ensure the element is at the correct position in the list
+    if (container.children[index] !== el) {
+      container.insertBefore(el, container.children[index]);
+    }
+
+    // Only update content if something changed
     const old = jobs[job.id] || {};
     if (isNew || old.status !== job.status || old.progress !== job.progress) {
       const statusLabel = t('status_' + job.status);
