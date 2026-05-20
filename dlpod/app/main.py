@@ -29,8 +29,28 @@ DB_PATH = DATA_DIR / "dlpod.db"
 for directory in (DOWNLOAD_DIR, SERVE_DIR, WORK_DIR, DATA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
+import queue
+
 jobs = {}
 jobs_lock = threading.Lock()
+task_queue = queue.Queue()
+
+
+def worker():
+    while True:
+        task = task_queue.get()
+        if task is None:
+            break
+        try:
+            target, args = task
+            target(*args)
+        except Exception as e:
+            print(f"Worker thread error: {e}")
+        finally:
+            task_queue.task_done()
+
+
+threading.Thread(target=worker, daemon=True).start()
 
 MEDIA_EXTENSIONS = {
     ".mp3", ".mp4", ".m4a", ".webm", ".mkv", ".opus", ".ogg", ".flac", ".wav", ".aac", ".mov"
@@ -491,6 +511,8 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
             cleanup_job_dir(job_dir)
             return
         title = job.get("title") or "download"
+        job["status"] = "running"
+        job["log"] = [] # Clear the "queued" message
         job["progress"] = 0
         job["last_activity"] = utc_now()
 
@@ -563,6 +585,8 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
             cleanup_job_dir(job_dir)
             return
         title = job.get("title") or "Spotify Media"
+        job["status"] = "running"
+        job["log"] = [] # Clear the "queued" message
         job["progress"] = 0
         job["last_activity"] = utc_now()
 
@@ -771,9 +795,9 @@ def start_download():
             "mode": mode,
             "is_playlist": mode == "playlist",
             "duplicate_action": duplicate_action,
-            "status": "running",
+            "status": "queued",
             "progress": 0,
-            "log": [],
+            "log": ["Job added to queue... waiting for turn"],
             "filename": None,
             "serve_path": None,
             "artifacts": [],
@@ -786,7 +810,7 @@ def start_download():
 
     target = run_spotdl if source == "spotify" else run_ytdlp
     args = (job_id, url, fmt, mode, duplicate_action, advanced) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata, advanced)
-    threading.Thread(target=target, args=args, daemon=True).start()
+    task_queue.put((target, args))
     return jsonify({"job_id": job_id}), 202
 @app.route("/api/jobs/<job_id>/stop", methods=["POST"])
 def stop_job(job_id):
