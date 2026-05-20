@@ -862,12 +862,6 @@ def list_all_files():
     return jsonify(files)
 
 
-@app.route("/api/scan", methods=["POST"])
-def manual_scan():
-    sync_downloads_db()
-    return jsonify({"ok": True})
-
-
 @app.route("/api/download-direct", methods=["GET"])
 def download_direct():
     name = request.args.get("name")

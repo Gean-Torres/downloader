@@ -511,7 +511,6 @@
     <div class="modal-header">
       <span style="font-size: 10px; text-transform: uppercase;" data-i18n="all_files">All Downloaded Files</span>
       <div style="display: flex; gap: 8px;">
-        <button type="button" class="btn btn-ghost" id="scan-files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="scan_btn">Scan Folder</button>
         <button type="button" class="btn btn-ghost" id="refresh-files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="refresh_btn">Refresh</button>
         <button type="button" class="btn btn-ghost" onclick="closeFilesModal()" style="padding: 2px 8px;">✕</button>
       </div>
@@ -1354,7 +1353,6 @@ const filesBtn = document.getElementById('files-btn');
 const filesModal = document.getElementById('files-modal-overlay');
 const filesList = document.getElementById('files-list');
 const refreshFilesBtn = document.getElementById('refresh-files-btn');
-const scanFilesBtn = document.getElementById('scan-files-btn');
 const playerModal = document.getElementById('player-modal-overlay');
 const playerModalBody = document.getElementById('player-modal-body');
 
@@ -1364,19 +1362,6 @@ filesBtn.addEventListener('click', () => {
 });
 
 refreshFilesBtn.addEventListener('click', fetchFiles);
-
-scanFilesBtn.addEventListener('click', async () => {
-  scanFilesBtn.disabled = true;
-  scanFilesBtn.textContent = '...';
-  try {
-    await apiFetch('/api/scan', { method: 'POST' });
-    await fetchFiles();
-  } catch (e) { console.error(e); }
-  finally {
-    scanFilesBtn.disabled = false;
-    scanFilesBtn.textContent = t('scan_btn');
-  }
-});
 
 function closeFilesModal() {
   filesModal.classList.remove('open');
