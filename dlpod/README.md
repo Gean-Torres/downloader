@@ -149,12 +149,9 @@ location /dlpod/ {
 - Update yt-dlp regularly — it breaks often as sites change:
   `podman exec dlpod-dlpod-app pip install -U yt-dlp`
 
-## Low-RAM profile (Raspberry Pi)
+## Standard profile
 
-This repository now ships with a lower-memory default runtime profile:
+This repository ships with a balanced runtime profile:
 
-- `gunicorn` runs with `--workers 1 --threads 1 --worker-class sync`.
-- Pod memory requests/limits are tuned to `64Mi` request and `192Mi` limit in `dlpod-pod.yaml`.
-
-If your workload includes many concurrent downloads, increase memory limit first (for example `256Mi`),
-then increase threads/workers only if needed.
+- `gunicorn` runs with `--workers 1 --threads 4 --worker-class gthread`.
+- Pod memory requests/limits are tuned to `64Mi` request and `250Mi` limit in `dlpod-pod.yaml`.
