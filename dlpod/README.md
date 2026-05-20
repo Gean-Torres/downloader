@@ -155,3 +155,30 @@ This repository ships with a balanced runtime profile:
 
 - `gunicorn` runs with `--workers 1 --threads 4 --worker-class gthread`.
 - Pod memory requests/limits are tuned to `64Mi` request and `250Mi` limit in `dlpod-pod.yaml`.
+
+## Key Features
+
+### 1. Session-Based Privacy
+The application now uses a browser-based **Client ID** to isolate download history and logs.
+- **Private History:** Your task list and "Files" view only show downloads initiated from your current browser session.
+- **Global Reuse:** Duplicate prevention still works globally; if someone else downloaded a file, you get it instantly, but your logs remain private.
+
+### 2. Admin Audit Log
+Administrators can monitor activity via an append-only log file located at `/opt/dlpod/downloads.log`.
+Each entry includes:
+- Timestamp & User IP
+- Shortened Client ID
+- Original requested URL
+- Final filename saved to disk
+
+### 3. Unified Job History
+- **Persistent Archive:** Background cleanup is disabled by default to maintain a full history of your downloads in the "Files" modal.
+- **Dismiss Logic:** Deleting a task from the main list merely "dismisses" it from view, keeping it archived in your personal files archive.
+
+### 4. Automatic Cookie Handling
+If a `cookies.txt` (Netscape format) is placed in `/opt/dlpod/`, the application will automatically use it for all `yt-dlp` and `spotdl` downloads. This enables access to age-restricted and private content.
+
+### 5. UI Enhancements
+- **Smart Auto-Scroll:** Terminal logs only scroll to the bottom if you are already looking at the end.
+- **Newest First:** The task list is automatically ordered to show the latest downloads at the top.
+- **Performance:** Filesystem scanning has been replaced with a lightning-fast database-driven file manager.
