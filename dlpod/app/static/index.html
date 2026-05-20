@@ -511,6 +511,7 @@
     <div class="modal-header">
       <span style="font-size: 10px; text-transform: uppercase;" data-i18n="all_files">All Downloaded Files</span>
       <div style="display: flex; gap: 8px;">
+        <button type="button" class="btn btn-ghost" id="scan-files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="scan_btn">Scan Folder</button>
         <button type="button" class="btn btn-ghost" id="refresh-files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="refresh_btn">Refresh</button>
         <button type="button" class="btn btn-ghost" onclick="closeFilesModal()" style="padding: 2px 8px;">✕</button>
       </div>
@@ -629,6 +630,7 @@ const i18n = {
     'files_btn': 'Files',
     'all_files': 'All Downloaded Files',
     'refresh_btn': 'Refresh',
+    'scan_btn': 'Scan Folder',
     'no_files': 'No files found in download directory',
     'folder_warn': 'FOLDER (ZIPS ON DOWNLOAD)',
     'settings_btn': 'Themes & Effects',
@@ -706,6 +708,7 @@ const i18n = {
     'files_btn': 'Arquivos',
     'all_files': 'Todos os Arquivos Baixados',
     'refresh_btn': 'Atualizar',
+    'scan_btn': 'Escanear Pasta',
     'no_files': 'Nenhum arquivo encontrado no diretório de downloads',
     'folder_warn': 'PASTA (SERÁ COMPACTADA)',
     'settings_btn': 'Temas e Efeitos',
@@ -1346,6 +1349,7 @@ const filesBtn = document.getElementById('files-btn');
 const filesModal = document.getElementById('files-modal-overlay');
 const filesList = document.getElementById('files-list');
 const refreshFilesBtn = document.getElementById('refresh-files-btn');
+const scanFilesBtn = document.getElementById('scan-files-btn');
 const playerModal = document.getElementById('player-modal-overlay');
 const playerModalBody = document.getElementById('player-modal-body');
 
@@ -1355,6 +1359,19 @@ filesBtn.addEventListener('click', () => {
 });
 
 refreshFilesBtn.addEventListener('click', fetchFiles);
+
+scanFilesBtn.addEventListener('click', async () => {
+  scanFilesBtn.disabled = true;
+  scanFilesBtn.textContent = '...';
+  try {
+    await apiFetch('/api/scan', { method: 'POST' });
+    await fetchFiles();
+  } catch (e) { console.error(e); }
+  finally {
+    scanFilesBtn.disabled = false;
+    scanFilesBtn.textContent = t('scan_btn');
+  }
+});
 
 function closeFilesModal() {
   filesModal.classList.remove('open');
@@ -1404,7 +1421,8 @@ function renderFiles(files) {
           <div style="font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(file.name)}">
             ${icon} ${escapeHtml(file.name)}
           </div>
-          <div style="font-size: 9px; color: var(--muted); text-transform: uppercase; display: flex; gap: 6px; align-items: center;">
+          <div style="font-size: 9px; color: var(--muted); text-transform: uppercase; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+            ${file.is_public ? `<span style="background: var(--accent2); color: #fff; padding: 0 4px; border-radius: 2px;">PUBLIC</span>` : `<span style="background: var(--green); color: #000; padding: 0 4px; border-radius: 2px;">PRIVATE</span>`}
             ${file.is_dir ? `<span style="color: var(--yellow); font-weight: bold;">${t('folder_warn')}</span>` : `<span style="background: var(--border2); color: var(--accent); padding: 0 4px; border-radius: 2px;">${ext}</span>`}
             <span>${formatSize(file.size)}</span>
             <span>•</span>

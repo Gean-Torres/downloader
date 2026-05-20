@@ -147,25 +147,43 @@ def sync_downloads_db():
     files = visible_download_files()
     file_paths = {str(p) for p in files}
 
-    with sqlite3.connect(DB_PATH) as conn:
-        # 1. Remove entries for files that no longer exist
-        cursor = conn.execute("SELECT path FROM downloads")
-        db_paths = {row[0] for row in cursor}
-        deleted_paths = db_paths - file_paths
-        if deleted_paths:
-            conn.executemany("DELETE FROM downloads WHERE path = ?", [(p,) for p in deleted_paths])
+    with jobs_lock:
+        # Get all paths currently tracked in jobs
+        tracked_paths = set()
+        for job in jobs.values():
+            path = job.get("serve_path") or job.get("filename")
+            if path:
+                tracked_paths.add(str(Path(path).resolve()))
 
-        # 2. Add files that are not in the DB
-        untracked_paths = file_paths - db_paths
-        for path_str in untracked_paths:
-            path = Path(path_str)
-            # Try to infer some info from filename
-            title = path.stem
-            fmt = path.suffix.lstrip(".") if path.is_file() else "folder"
-            conn.execute(
-                "INSERT INTO downloads (url, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                ("", title, path.name, fmt, path_str, utc_now())
-            )
+        # Add files that are not in the jobs DB
+        for path_obj in files:
+            abs_path = str(path_obj.resolve())
+            if abs_path not in tracked_paths:
+                # Create a synthetic "public" job for this file
+                job_id = f"scanned-{uuid.uuid4().hex[:8]}"
+                title = path_obj.stem
+                fmt = path_obj.suffix.lstrip(".") if path_obj.is_file() else "folder"
+                
+                new_job = {
+                    "id": job_id,
+                    "client_id": "public",
+                    "url": "local-file",
+                    "source": "local",
+                    "format": fmt,
+                    "title": title,
+                    "status": "done",
+                    "progress": 100,
+                    "log": ["Detected local file via scan"],
+                    "filename": str(path_obj),
+                    "serve_path": str(path_obj) if path_obj.is_file() else None,
+                    "is_playlist": path_obj.is_dir(),
+                    "dismissed": True,
+                    "started_at": utc_now(),
+                    "finished_at": utc_now(),
+                    "last_activity": utc_now(),
+                }
+                jobs[job_id] = new_job
+                save_job_to_db(job_id)
 
 
 def utc_now() -> str:
@@ -818,13 +836,13 @@ def list_all_files():
     files = []
     
     with jobs_lock:
+        # Show personal downloads OR public scanned files
         user_finished_jobs = [
             job for job in jobs.values() 
-            if job.get("client_id") == client_id and job["status"] == "done"
+            if (job.get("client_id") == client_id or job.get("client_id") == "public") and job["status"] == "done"
         ]
 
     for job in user_finished_jobs:
-        # Check both serve_path and filename (one of them should hold the path)
         path_str = job.get("serve_path") or job.get("filename")
         if not path_str:
             continue
@@ -837,10 +855,17 @@ def list_all_files():
                 "is_dir": path.is_dir(),
                 "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
                 "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "is_public": job.get("client_id") == "public"
             })
     # Sort by mtime descending
     files.sort(key=lambda x: x["mtime"], reverse=True)
     return jsonify(files)
+
+
+@app.route("/api/scan", methods=["POST"])
+def manual_scan():
+    sync_downloads_db()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/download-direct", methods=["GET"])
