@@ -192,6 +192,31 @@
     main { grid-template-columns: 1fr; padding: 16px; }
   }
 
+
+
+  @media (max-width: 760px) {
+    .section-title { flex-wrap: wrap; gap: 8px; }
+    .section-title > div { width: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+    .section-title > div .btn { flex: 1 1 120px; text-align: center; }
+    #media-link { flex: 1 1 100%; text-align: center; }
+    .job-url { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    footer { flex-direction: column; gap: 6px; align-items: flex-start; }
+    #notif-container { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+    .notif { min-width: 0; width: 100%; }
+    .modal { width: 100%; max-height: 90vh; }
+  }
+  @media (max-width: 520px) {
+    body { font-size: 12px; }
+    header { padding: 12px; gap: 10px; }
+    .logo { font-size: 1.5rem; letter-spacing: 2px; }
+    main { padding: 12px; gap: 14px; }
+    .panel-card { padding: 14px; }
+    .row { grid-template-columns: 1fr; }
+    .header-actions { gap: 8px; }
+    .header-actions .btn, .header-actions select { width: 100%; min-height: 36px; }
+    .job-info { flex-direction: column; align-items: flex-start; gap: 6px; }
+  }
+
   .panel { display: flex; flex-direction: column; gap: 24px; }
   .panel-card {
     position: relative;
@@ -917,6 +942,12 @@ function applyRememberedSelections() {
 let currentTitle = '';
 let infoTimeout = null;
 let downloadedJobs = new Set();
+
+function resolveDownloadUrl(job) {
+  const path = job?.download_url || (job?.id ? `/api/jobs/${job.id}/download` : null);
+  if (!path) return null;
+  return path.startsWith('http://') || path.startsWith('https://') ? path : new URL(path, window.location.origin).toString();
+}
 let notifiedTerminalJobs = new Set();
 
 function showNotification(msg, type = 'info') {
@@ -1151,9 +1182,12 @@ async function fetchJobs() {
       data.forEach(job => {
         if (job.status === 'done' && !downloadedJobs.has(job.id)) {
           downloadedJobs.add(job.id);
+          const downloadUrl = resolveDownloadUrl(job);
+          if (!downloadUrl) return;
           const link = document.createElement('a');
-          link.href = `/api/jobs/${job.id}/download`;
+          link.href = downloadUrl;
           link.download = '';
+          link.rel = 'noopener';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
@@ -1217,7 +1251,7 @@ function renderJobs(list) {
           <div style="display: flex; gap: 4px;">
             <button type="button" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px;" onclick="showLog('${job.id}')">${t('btn_log')}</button>
             ${job.status === 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="stopJob('${job.id}')">${t('btn_stop')}</button>` : ''}
-            ${job.status === 'done' && job.serve_path ? `<a href="/api/jobs/${job.id}/download" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;">${t('btn_save')}</a>` : ''}
+            ${job.status === 'done' && job.serve_path ? `<a href="${escapeHtml(resolveDownloadUrl(job) || '#')}" class="btn btn-ghost" style="padding: 2px 6px; font-size: 9px; text-decoration:none;" rel="noopener">${t('btn_save')}</a>` : ''}
             ${job.status !== 'running' ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 2px 6px; font-size: 9px;" onclick="deleteJob('${job.id}')">✕</button>` : ''}
           </div>
         </div>
