@@ -397,28 +397,6 @@ def cleanup_job_dir(job_dir: Path):
         print(f"Error cleaning up {job_dir}: {exc}")
 
 
-def stream_folder_as_zip(folder_path: Path):
-    import io
-    import zipfile
-
-    def generator():
-        # We use a memory buffer to store chunks of the ZIP
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
-            for path in sorted(folder_path.rglob("*")):
-                if not path.is_file():
-                    continue
-                zf.write(path, path.relative_to(folder_path))
-                # Yield what we have so far
-                yield buf.getvalue()
-                buf.seek(0)
-                buf.truncate()
-        # Finalize and yield remaining
-        yield buf.getvalue()
-
-    return generator()
-
-
 def register_single_artifact(job_id: str, source_file: Path, duplicate_action: str, partial: bool = False) -> None:
     final_dest = DOWNLOAD_DIR / source_file.name
     if final_dest.exists():
@@ -699,8 +677,10 @@ def get_info():
             if client_secret:
                 cmd += ["--client-secret", client_secret]
 
+            app.logger.info(f"Fetching Spotify info with cmd: {' '.join(cmd)}")
             # Use a longer timeout for info fetching as spotdl can be slow with large playlists
             output = subprocess.check_output(cmd, text=True, timeout=300)
+            app.logger.debug(f"Spotdl raw output: {output[:500]}...")
             json_start = output.find("[")
             if json_start != -1:
                 metadata = json.loads(output[json_start:])
@@ -716,7 +696,20 @@ def get_info():
                         "mode": infer_mode(url)
                     })
         except Exception as exc:
-            app.logger.error(f"Failed to fetch Spotify metadata: {exc}")
+            app.logger.warning(f"Spotdl info fetch failed, trying yt-dlp fallback: {exc}")
+            try:
+                # Fallback to yt-dlp to at least get the title
+                cmd_fallback = ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings", url]
+                output_fb = subprocess.check_output(cmd_fallback, text=True, timeout=15)
+                info_fb = json.loads(output_fb)
+                return jsonify({
+                    "title": resolve_job_title(url, source, info_fb.get("title") or info_fb.get("playlist_title")),
+                    "source": source,
+                    "is_playlist": infer_mode(url) == "playlist",
+                    "mode": infer_mode(url)
+                })
+            except Exception as fb_exc:
+                app.logger.error(f"Spotify yt-dlp fallback also failed: {fb_exc}")
 
         return jsonify({"title": resolve_job_title(url, source), "source": source, "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)})
 
@@ -905,17 +898,17 @@ def download_direct():
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    
+
     try:
         # Security: prevent path traversal
         download_dir_abs = DOWNLOAD_DIR.resolve()
         safe_path = (download_dir_abs / name).resolve()
-        
+
         # Robust path traversal check
         if not safe_path.is_relative_to(download_dir_abs):
              app.logger.warning(f"Blocked path traversal attempt: {name}")
              return jsonify({"error": "Invalid file path"}), 403
-             
+
         if not safe_path.exists():
             app.logger.warning(f"File not found: {safe_path}")
             return jsonify({"error": "File not found"}), 404
@@ -925,18 +918,26 @@ def download_direct():
             return send_file(safe_path, as_attachment=True, download_name=safe_path.name)
         else:
             if request.args.get("zip", "").lower() in {"1", "true", "yes"}:
-                # Stream the folder as a ZIP archive on-the-fly
-                filename = f"{safe_path.name}.zip"
-                return Response(
-                    stream_folder_as_zip(safe_path),
-                    mimetype="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename={filename}"}
-                )
+                # Create a ZIP archive in the serve directory
+                zip_filename = f"{safe_path.name}.zip"
+                zip_path = SERVE_DIR / f"{uuid.uuid4().hex}_{zip_filename}"
+
+                try:
+                    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+                        for file_path in sorted(safe_path.rglob("*")):
+                            if file_path.is_file():
+                                zf.write(file_path, file_path.relative_to(safe_path))
+
+                    return send_file(zip_path, as_attachment=True, download_name=zip_filename)
+                except Exception as zip_err:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                    raise zip_err
+
             return jsonify({"error": "Directory downloads are disabled by default. Request zip=true to download an archive."}), 400
     except Exception as e:
         app.logger.error(f"Error in download_direct: {e}", exc_info=True)
         return jsonify({"error": "Internal server error", "message": str(e)}), 500
-
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
