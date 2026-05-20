@@ -44,7 +44,8 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 client_id TEXT,
                 data TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                dismissed INTEGER DEFAULT 0
             )
         """)
         conn.execute("""
@@ -71,13 +72,20 @@ def init_db():
         if "client_id" not in columns:
             conn.execute("ALTER TABLE downloads ADD COLUMN client_id TEXT")
 
+        # Migration: add dismissed to jobs if missing
+        cursor = conn.execute("PRAGMA table_info(jobs)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "dismissed" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN dismissed INTEGER DEFAULT 0")
+
     # Load recent jobs into memory
     with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT client_id, data FROM jobs ORDER BY updated_at ASC")
+        cursor = conn.execute("SELECT client_id, data, dismissed FROM jobs ORDER BY updated_at ASC")
         for row in cursor:
-            client_id, data_json = row
+            client_id, data_json, dismissed = row
             job = json.loads(data_json)
             job["client_id"] = client_id
+            job["dismissed"] = bool(dismissed)
             if job.get("status") == "running":
                 job["status"] = "error"
                 job["log"].append("❌ Job interrupted by system restart")
@@ -99,15 +107,16 @@ def save_job_to_db(job_id: str):
         job = jobs.get(job_id)
         if not job:
             return
-        # Don't save the process object or client_id (stored in separate column)
-        data = {k: v for k, v in job.items() if k not in ("proc", "client_id")}
+        # Don't save the process object, client_id, or dismissed (stored in separate columns)
+        data = {k: v for k, v in job.items() if k not in ("proc", "client_id", "dismissed")}
         client_id = job.get("client_id")
+        dismissed = 1 if job.get("dismissed") else 0
         updated_at = data.get("last_activity") or utc_now()
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO jobs (id, client_id, data, updated_at) VALUES (?, ?, ?, ?)",
-            (job_id, client_id, json.dumps(data), updated_at)
+            "INSERT OR REPLACE INTO jobs (id, client_id, data, updated_at, dismissed) VALUES (?, ?, ?, ?, ?)",
+            (job_id, client_id, json.dumps(data), updated_at, dismissed)
         )
 
 
@@ -613,7 +622,7 @@ def background_cleanup():
                 pass
 
 
-threading.Thread(target=background_cleanup, daemon=True).start()
+# threading.Thread(target=background_cleanup, daemon=True).start()
 
 
 @app.route("/api/info", methods=["POST"])
@@ -683,18 +692,17 @@ def check_duplicates():
 @app.route("/api/clear", methods=["POST"])
 def clear_jobs():
     client_id = request.headers.get("X-Client-ID")
-    to_delete = []
+    to_dismiss = []
     with jobs_lock:
-        for job_id, job in list(jobs.items()):
-            if job.get("client_id") == client_id and job["status"] != "running":
-                to_delete.append(job_id)
-                jobs.pop(job_id)
+        for job_id, job in jobs.items():
+            if job.get("client_id") == client_id and job["status"] != "running" and not job.get("dismissed"):
+                job["dismissed"] = True
+                to_dismiss.append(job_id)
 
-    with sqlite3.connect(DB_PATH) as conn:
-        for job_id in to_delete:
-            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+    for job_id in to_dismiss:
+        save_job_to_db(job_id)
 
-    return jsonify({"ok": True, "cleared": len(to_delete)})
+    return jsonify({"ok": True, "dismissed": len(to_dismiss)})
 
 
 @app.route("/api/download", methods=["POST"])
@@ -770,7 +778,7 @@ def stop_job(job_id):
 def list_jobs():
     client_id = request.headers.get("X-Client-ID")
     with jobs_lock:
-        user_jobs = [job for job in jobs.values() if job.get("client_id") == client_id]
+        user_jobs = [job for job in jobs.values() if job.get("client_id") == client_id and not job.get("dismissed")]
         return jsonify([serializable_job(job) for job in reversed(user_jobs)][:50])
 
 
@@ -809,12 +817,18 @@ def list_all_files():
     client_id = request.headers.get("X-Client-ID")
     files = []
     
-    # Query only files "owned" by this client_id
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT filename, path FROM downloads WHERE client_id = ?", (client_id,))
-        user_files = cursor.fetchall()
+    with jobs_lock:
+        user_finished_jobs = [
+            job for job in jobs.values() 
+            if job.get("client_id") == client_id and job["status"] == "done"
+        ]
 
-    for filename, path_str in user_files:
+    for job in user_finished_jobs:
+        # Check both serve_path and filename (one of them should hold the path)
+        path_str = job.get("serve_path") or job.get("filename")
+        if not path_str:
+            continue
+            
         path = Path(path_str)
         if path.exists():
             stat = path.stat()
@@ -874,17 +888,9 @@ def delete_job(job_id):
         job = jobs.get(job_id)
         if not job or job.get("client_id") != client_id:
             return jsonify({"error": "Not found"}), 404
-        jobs.pop(job_id)
-
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-
-    serve_path = job.get("serve_path")
-    if serve_path:
-        try:
-            Path(serve_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        job["dismissed"] = True
+    
+    save_job_to_db(job_id)
     return jsonify({"ok": True})
 
 
