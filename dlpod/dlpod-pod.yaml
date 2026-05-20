@@ -32,7 +32,7 @@ spec:
           name: data-vol
       resources:
         limits:
-          memory: 250Mi
+          memory: 384Mi
         requests:
           memory: 64Mi
   volumes:
