@@ -736,13 +736,6 @@ def stop_job(job_id):
             except Exception:
                 pass
     return jsonify({"ok": True})
-                job.pop("proc", None)
-            except Exception as exc:
-                return jsonify({"error": str(exc)}), 500
-        else:
-            return jsonify({"error": "Job is not running"}), 400
-    save_job_to_db(job_id)
-    return jsonify({"ok": True})
 
 
 @app.route("/api/jobs", methods=["GET"])
