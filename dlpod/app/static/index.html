@@ -1342,8 +1342,15 @@ async function refreshModal() {
   const res = await apiFetch(`/api/jobs/${modalJobId}/log`);
   const data = await res.json();
   const body = document.getElementById('modal-body');
+  
+  // Smart auto-scroll: check if user is near bottom before updating
+  const isNearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
+  
   body.innerHTML = data.log.map(l => `<div>${escapeHtml(l)}</div>`).join('');
-  body.scrollTop = body.scrollHeight;
+  
+  if (isNearBottom) {
+    body.scrollTop = body.scrollHeight;
+  }
 }
 
 function closeModal() {
