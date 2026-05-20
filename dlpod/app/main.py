@@ -527,6 +527,10 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
             cmd += ["-x", "--audio-format", "opus"]
         else:
             cmd += ["-f", "bv*+ba/b"]
+        cookies_path = DATA_DIR / "cookies.txt"
+        if cookies_path.exists():
+            cmd += ["--cookies", str(cookies_path)]
+
         extra_args = advanced.get("extra_args") if isinstance(advanced, dict) else ""
         if extra_args:
             cmd += shlex.split(extra_args)
@@ -581,6 +585,16 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
             cmd += ["--audio", str(advanced["audio_provider"])]
         if advanced.get("yt_dlp_args"):
             cmd += ["--yt-dlp-args", str(advanced["yt_dlp_args"])]
+        
+        cookies_path = DATA_DIR / "cookies.txt"
+        if cookies_path.exists():
+            # Add --cookies to spotdl's yt-dlp arguments
+            if "--yt-dlp-args" in cmd:
+                # Find the index of the existing --yt-dlp-args value and append to it
+                idx = cmd.index("--yt-dlp-args") + 1
+                cmd[idx] = f"{cmd[idx]} --cookies {cookies_path}"
+            else:
+                cmd += ["--yt-dlp-args", f"--cookies {cookies_path}"]
 
         # Pass credentials if available in environment
         client_id = os.environ.get("SPOTIPY_CLIENT_ID")
