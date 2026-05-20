@@ -24,6 +24,8 @@ spec:
         - name: GENIUS_ACCESS_TOKEN
           value: "YOUR_GENIUS_TOKEN"
       volumeMounts:
+        - mountPath: /downloads/_serve
+          name: tmp-serve
         - mountPath: /downloads
           name: downloads-vol
         - mountPath: /data
@@ -34,6 +36,10 @@ spec:
         requests:
           memory: 64Mi
   volumes:
+    - name: tmp-serve
+      emptyDir:
+        medium: Memory
+        sizeLimit: 128Mi
     - name: downloads-vol
       hostPath:
         # point this at your host path
