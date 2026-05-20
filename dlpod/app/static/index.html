@@ -573,6 +573,16 @@
           </select>
           <div class="settings-note" data-i18n="weather_note">Weather effects only run when animations are enabled.</div>
         </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label" data-i18n="lock_dl_label">Lock download until metadata is ready</div>
+            <div class="settings-note" data-i18n="lock_dl_note">Prevent starting downloads before the title/info is fetched to ensure correct file names.</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="lock-dl-toggle">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
       </div>
     </div>
   </div>
@@ -663,7 +673,9 @@ const i18n = {
     'adv_threads': 'spotdl threads',
     'adv_audio_provider': 'spotdl audio provider (youtube-music)',
     'adv_ytdlp_args': 'spotdl --yt-dlp-args',
-    'adv_write_subs': 'Write subtitles (yt-dlp)'
+    'adv_write_subs': 'Write subtitles (yt-dlp)',
+    'lock_dl_label': 'Lock download until metadata is ready',
+    'lock_dl_note': 'Prevent starting downloads before the title/info is fetched to ensure correct file names.'
   },
   'pt-BR': {
     'header_meta': 'Buscador de Mídia • Online',
@@ -742,9 +754,11 @@ const i18n = {
     'adv_threads': 'Threads spotdl',
     'adv_audio_provider': 'Provedor de áudio spotdl (youtube-music)',
     'adv_ytdlp_args': 'spotdl --yt-dlp-args',
-    'adv_write_subs': 'Baixar legendas (yt-dlp)'
-  }
-};
+    'adv_write_subs': 'Gravar legendas (yt-dlp)',
+    'lock_dl_label': 'Bloquear download até metadados prontos',
+    'lock_dl_note': 'Evita iniciar downloads antes que o título/info seja carregado para garantir nomes de arquivos corretos.'
+    }
+    };
 
 let currentLang = 'en';
 
@@ -826,6 +840,7 @@ const weatherSelect = document.getElementById('weather-select');
 const weatherLayer = document.getElementById('weather-layer');
 const advancedToggle = document.getElementById('advanced-toggle');
 const advancedFields = document.getElementById('advanced-fields');
+const lockDlToggle = document.getElementById('lock-dl-toggle');
 
 
 function rebuildWeatherParticles(effect) {
@@ -875,7 +890,24 @@ function initAppearance() {
   // Resource-consuming effects are intentionally off by default.
   applyEffects(localStorage.getItem('dlpod_effects_enabled') === '1');
   applyWeather(localStorage.getItem('dlpod_weather_fx') || 'none');
+  
+  const lockDl = localStorage.getItem('dlpod_lock_dl') === '1';
+  lockDlToggle.checked = lockDl;
 }
+
+lockDlToggle.addEventListener('change', () => {
+  localStorage.setItem('dlpod_lock_dl', lockDlToggle.checked ? '1' : '0');
+  const hasUrl = !!urlInput.value.trim();
+  const isFetching = urlInfo.textContent === t('fetching_info');
+  
+  if (lockDlToggle.checked && hasUrl && isFetching) {
+    dlBtn.disabled = true;
+    dlBtn.textContent = '...';
+  } else {
+    dlBtn.disabled = false;
+    dlBtn.textContent = t('fetch_btn');
+  }
+});
 
 function openSettingsModal() {
   settingsModal.classList.add('open');
@@ -1010,7 +1042,16 @@ async function fetchTitle() {
   if (!url) {
     urlInfo.textContent = '';
     currentTitle = '';
+    // Enable button if empty, so user can see it's clickable (though dlBtn click handler checks for url)
+    dlBtn.disabled = false;
+    dlBtn.textContent = t('fetch_btn');
     return;
+  }
+
+  const isLocked = localStorage.getItem('dlpod_lock_dl') === '1';
+  if (isLocked) {
+    dlBtn.disabled = true;
+    dlBtn.textContent = '...';
   }
 
   urlInfo.textContent = t('fetching_info');
@@ -1024,11 +1065,11 @@ async function fetchTitle() {
     if (data.error) throw new Error(data.error);
     currentTitle = data.title || 'Unknown Media';
     if (data.mode && modeSelect.value === 'auto') modeSelect.dataset.detected = data.mode;
-    
+
     const label = data.is_playlist ? t('playlist_label') : t('single_label');
     const items = data.item_count ? ': ' + data.item_count : '';
     const playlistText = ` [${label}${items}]`;
-    
+
     urlInfo.textContent = `▶ ${currentTitle}${playlistText}`;
     if (data.is_playlist) {
       urlInfo.style.color = 'var(--yellow)';
@@ -1039,10 +1080,15 @@ async function fetchTitle() {
     urlInfo.textContent = t('info_error');
     urlInfo.style.color = 'var(--accent2)';
     currentTitle = 'download';
-    showNotification(`${t('info_error')}: ${e.message}`, 'error');
+    // Don't show notification for simple 404/parsing errors during typing
+    console.warn(`Fetch info error: ${e.message}`);
+  } finally {
+    if (isLocked) {
+      dlBtn.disabled = false;
+      dlBtn.textContent = t('fetch_btn');
+    }
   }
 }
-
 let formatsMetadata = null;
 
 async function fetchMetadata() {
@@ -1110,6 +1156,11 @@ function updateQualityVisibility() {
 }
 
 urlInput.addEventListener('input', () => {
+  const isLocked = localStorage.getItem('dlpod_lock_dl') === '1';
+  if (isLocked && urlInput.value.trim()) {
+    dlBtn.disabled = true;
+    dlBtn.textContent = '...';
+  }
   updateFormats();
   clearTimeout(infoTimeout);
   infoTimeout = setTimeout(fetchTitle, 800);
