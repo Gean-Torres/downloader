@@ -32,14 +32,14 @@ spec:
           name: data-vol
       resources:
         limits:
-          memory: 384Mi
+          memory: 500Mi
         requests:
           memory: 64Mi
   volumes:
     - name: tmp-serve
       emptyDir:
         medium: Memory
-        sizeLimit: 128Mi
+        sizeLimit: 250Mi
     - name: downloads-vol
       hostPath:
         # point this at your host path
