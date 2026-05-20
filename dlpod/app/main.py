@@ -42,6 +42,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
+                client_id TEXT,
                 data TEXT,
                 updated_at TEXT
             )
@@ -59,9 +60,11 @@ def init_db():
 
     # Load recent jobs into memory
     with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT data FROM jobs ORDER BY updated_at ASC")
+        cursor = conn.execute("SELECT client_id, data FROM jobs ORDER BY updated_at ASC")
         for row in cursor:
-            job = json.loads(row[0])
+            client_id, data_json = row
+            job = json.loads(data_json)
+            job["client_id"] = client_id
             if job.get("status") == "running":
                 job["status"] = "error"
                 job["log"].append("❌ Job interrupted by system restart")
@@ -83,14 +86,15 @@ def save_job_to_db(job_id: str):
         job = jobs.get(job_id)
         if not job:
             return
-        # Don't save the process object
-        data = {k: v for k, v in job.items() if k != "proc"}
+        # Don't save the process object or client_id (stored in separate column)
+        data = {k: v for k, v in job.items() if k not in ("proc", "client_id")}
+        client_id = job.get("client_id")
         updated_at = data.get("last_activity") or utc_now()
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO jobs (id, data, updated_at) VALUES (?, ?, ?)",
-            (job_id, json.dumps(data), updated_at)
+            "INSERT OR REPLACE INTO jobs (id, client_id, data, updated_at) VALUES (?, ?, ?, ?)",
+            (job_id, client_id, json.dumps(data), updated_at)
         )
 
 
@@ -648,27 +652,26 @@ def check_duplicates():
     return jsonify({"duplicates": find_duplicates(title, fmt)})
 
 
-@app.route("/api/refresh", methods=["POST"])
-def manual_refresh():
-    # Sync downloads from filesystem
-    sync_downloads_db()
-
-    # Save all in-memory jobs to DB
-    job_ids = []
+@app.route("/api/clear", methods=["POST"])
+def clear_jobs():
+    client_id = request.headers.get("X-Client-ID")
+    to_delete = []
     with jobs_lock:
-        job_ids = list(jobs.keys())
+        for job_id, job in list(jobs.items()):
+            if job.get("client_id") == client_id and job["status"] != "running":
+                to_delete.append(job_id)
+                jobs.pop(job_id)
 
-    for jid in job_ids:
-        try:
-            save_job_to_db(jid)
-        except Exception:
-            pass
+    with sqlite3.connect(DB_PATH) as conn:
+        for job_id in to_delete:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
-    return jsonify({"ok": True, "jobs_synced": len(job_ids)})
+    return jsonify({"ok": True, "cleared": len(to_delete)})
 
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
+    client_id = request.headers.get("X-Client-ID")
     data = request.json or {}
     url = data.get("url", "").strip()
     fmt = data.get("format", "mp3")
@@ -691,6 +694,7 @@ def start_download():
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
+            "client_id": client_id,
             "url": url,
             "source": source,
             "format": fmt,
@@ -716,13 +720,12 @@ def start_download():
     args = (job_id, url, fmt, mode, duplicate_action, advanced) if source == "spotify" else (job_id, url, fmt, quality, mode, duplicate_action, embed_metadata, advanced)
     threading.Thread(target=target, args=args, daemon=True).start()
     return jsonify({"job_id": job_id}), 202
-
-
 @app.route("/api/jobs/<job_id>/stop", methods=["POST"])
 def stop_job(job_id):
+    client_id = request.headers.get("X-Client-ID")
     with jobs_lock:
         job = jobs.get(job_id)
-        if not job:
+        if not job or job.get("client_id") != client_id:
             return jsonify({"error": "Job not found"}), 404
         proc = job.get("proc")
         if job["status"] == "running" and proc:
@@ -730,7 +733,9 @@ def stop_job(job_id):
                 proc.terminate()
                 job["status"] = "stopped"
                 job["log"].append("🛑 Job stopped by user")
-                job["finished_at"] = utc_now()
+            except Exception:
+                pass
+    return jsonify({"ok": True})
                 job.pop("proc", None)
             except Exception as exc:
                 return jsonify({"error": str(exc)}), 500
@@ -742,8 +747,10 @@ def stop_job(job_id):
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
+    client_id = request.headers.get("X-Client-ID")
     with jobs_lock:
-        return jsonify([serializable_job(job) for job in reversed(list(jobs.values()))][:50])
+        user_jobs = [job for job in jobs.values() if job.get("client_id") == client_id]
+        return jsonify([serializable_job(job) for job in reversed(user_jobs)][:50])
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
@@ -832,10 +839,12 @@ def download_direct():
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
+    client_id = request.headers.get("X-Client-ID")
     with jobs_lock:
-        job = jobs.pop(job_id, None)
-    if not job:
-        return jsonify({"error": "Not found"}), 404
+        job = jobs.get(job_id)
+        if not job or job.get("client_id") != client_id:
+            return jsonify({"error": "Not found"}), 404
+        jobs.pop(job_id)
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))

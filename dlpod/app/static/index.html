@@ -741,6 +741,21 @@ const i18n = {
 
 let currentLang = 'en';
 
+const clientId = (() => {
+  let id = localStorage.getItem('dlpod_client_id');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('dlpod_client_id', id);
+  }
+  return id;
+})();
+
+async function apiFetch(url, options = {}) {
+  options.headers = options.headers || {};
+  options.headers['X-Client-ID'] = clientId;
+  return fetch(url, options);
+}
+
 function t(key) {
   const dict = i18n[currentLang] || i18n['en'];
   return dict[key] || key;
@@ -993,7 +1008,7 @@ async function fetchTitle() {
 
   urlInfo.textContent = t('fetching_info');
   try {
-    const res = await fetch('/api/info', {
+    const res = await apiFetch('/api/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
@@ -1025,7 +1040,7 @@ let formatsMetadata = null;
 
 async function fetchMetadata() {
   try {
-    const res = await fetch('/api/formats');
+    const res = await apiFetch('/api/formats');
     formatsMetadata = await res.json();
     updateFormats();
   } catch (e) { console.error('Failed to fetch metadata:', e); }
@@ -1117,7 +1132,7 @@ dlBtn.addEventListener('click', async () => {
   dlBtn.textContent = '...';
 
   try {
-    const res = await fetch('/api/download', {
+    const res = await apiFetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1161,7 +1176,7 @@ dlBtn.addEventListener('click', async () => {
 
 async function fetchJobs() {
   try {
-    const res = await fetch('/api/jobs');
+    const res = await apiFetch('/api/jobs');
     if (!res.ok) {
        console.error('Jobs poll failed', res.status);
        return; // Don't clear UI if server is temporarily down
@@ -1291,20 +1306,17 @@ function renderJobs(list) {
 }
 
 async function stopJob(id) {
-  await fetch(`/api/jobs/${id}/stop`, { method: 'POST' });
+  await apiFetch(`/api/jobs/${id}/stop`, { method: 'POST' });
   fetchJobs();
 }
 
 async function deleteJob(id) {
-  await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+  await apiFetch(`/api/jobs/${id}`, { method: 'DELETE' });
   fetchJobs();
 }
 
 document.getElementById('clear-btn').addEventListener('click', async () => {
-  const res = await fetch('/api/jobs');
-  const list = await res.json();
-  const toDelete = list.filter(j => j.status !== 'running');
-  await Promise.all(toDelete.map(j => fetch(`/api/jobs/${j.id}`, { method: 'DELETE' })));
+  await apiFetch('/api/clear', { method: 'POST' });
   fetchJobs();
 });
 
@@ -1316,7 +1328,7 @@ async function showLog(id) {
 
 async function refreshModal() {
   if (!modalJobId) return;
-  const res = await fetch(`/api/jobs/${modalJobId}/log`);
+  const res = await apiFetch(`/api/jobs/${modalJobId}/log`);
   const data = await res.json();
   const body = document.getElementById('modal-body');
   body.innerHTML = data.log.map(l => `<div>${escapeHtml(l)}</div>`).join('');
@@ -1351,7 +1363,7 @@ function closeFilesModal() {
 async function fetchFiles() {
   filesList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--muted);">Loading...</div>';
   try {
-    const res = await fetch('/api/files');
+    const res = await apiFetch('/api/files');
     const data = await res.json();
     renderFiles(data);
   } catch (e) {
