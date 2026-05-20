@@ -57,6 +57,12 @@ def init_db():
                 created_at TEXT
             )
         """)
+        
+        # Migration: add client_id to jobs if missing
+        cursor = conn.execute("PRAGMA table_info(jobs)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "client_id" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN client_id TEXT")
 
     # Load recent jobs into memory
     with sqlite3.connect(DB_PATH) as conn:
