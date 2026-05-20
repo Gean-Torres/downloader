@@ -675,8 +675,8 @@ def get_info():
             if client_secret:
                 cmd += ["--client-secret", client_secret]
 
-            # Use a longer timeout for info fetching as spotdl can be slow
-            output = subprocess.check_output(cmd, text=True, timeout=60)
+            # Use a longer timeout for info fetching as spotdl can be slow with large playlists
+            output = subprocess.check_output(cmd, text=True, timeout=300)
             json_start = output.find("[")
             if json_start != -1:
                 metadata = json.loads(output[json_start:])
