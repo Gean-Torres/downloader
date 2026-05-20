@@ -50,6 +50,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS downloads (
                 url TEXT,
+                client_id TEXT,
                 title TEXT,
                 filename TEXT,
                 format TEXT,
@@ -63,6 +64,12 @@ def init_db():
         columns = [row[1] for row in cursor.fetchall()]
         if "client_id" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN client_id TEXT")
+
+        # Migration: add client_id to downloads if missing
+        cursor = conn.execute("PRAGMA table_info(downloads)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "client_id" not in columns:
+            conn.execute("ALTER TABLE downloads ADD COLUMN client_id TEXT")
 
     # Load recent jobs into memory
     with sqlite3.connect(DB_PATH) as conn:
@@ -104,12 +111,27 @@ def save_job_to_db(job_id: str):
         )
 
 
-def record_download(url: str, title: str, filename: str, fmt: str, path: str):
+def log_admin_event(client_id: str | None, filename: str):
+    log_path = DATA_DIR / "downloads.log"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ip = request.remote_addr if request else "unknown"
+    client_short = (client_id[:8] if client_id else "unknown")
+    
+    log_line = f"[{timestamp}] IP: {ip} | User: {client_short} | File: {filename}\n"
+    try:
+        with open(log_path, "a") as f:
+            f.write(log_line)
+    except Exception as e:
+        print(f"Error writing admin log: {e}")
+
+
+def record_download(url: str, client_id: str | None, title: str, filename: str, fmt: str, path: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO downloads (url, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (url, title, filename, fmt, path, utc_now())
+            "INSERT OR REPLACE INTO downloads (url, client_id, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (url, client_id, title, filename, fmt, path, utc_now())
         )
+    log_admin_event(client_id, filename)
 
 
 def sync_downloads_db():
@@ -368,8 +390,8 @@ def register_single_artifact(job_id: str, source_file: Path, duplicate_action: s
     # Record download to DB
     with jobs_lock:
         job = jobs.get(job_id, {})
-        url, title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
-    record_download(url, title, final_dest.name, fmt, str(final_dest))
+        url, client_id, title, fmt = job.get("url", ""), job.get("client_id"), job.get("title", ""), job.get("format", "")
+    record_download(url, client_id, title, final_dest.name, fmt, str(final_dest))
 
     # Serve directly from the permanent storage
     finish(job_id, "done", filename=str(final_dest), serve_path=str(final_dest), artifacts=[artifact_response(final_dest)], partial=partial)
@@ -392,8 +414,8 @@ def register_playlist_artifact(job_id: str, job_dir: Path, title: str, duplicate
 
     with jobs_lock:
         job = jobs.get(job_id, {})
-        url, job_title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
-    record_download(url, job_title or title, final_dir.name, fmt, str(final_dir))
+        url, client_id, job_title, fmt = job.get("url", ""), job.get("client_id"), job.get("title", ""), job.get("format", "")
+    record_download(url, client_id, job_title or title, final_dir.name, fmt, str(final_dir))
 
     finish(job_id, "done", filename=str(final_dir), serve_path=None, artifacts=[artifact_response(final_dir)], is_playlist=True, partial=partial)
     emit(job_id, f"✅ Playlist folder saved: {final_dir.name}")
@@ -784,15 +806,24 @@ def download_file(job_id):
 
 @app.route("/api/files", methods=["GET"])
 def list_all_files():
+    client_id = request.headers.get("X-Client-ID")
     files = []
-    for path in visible_download_files():
-        stat = path.stat()
-        files.append({
-            "name": path.name,
-            "is_dir": path.is_dir(),
-            "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
-            "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
+    
+    # Query only files "owned" by this client_id
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute("SELECT filename, path FROM downloads WHERE client_id = ?", (client_id,))
+        user_files = cursor.fetchall()
+
+    for filename, path_str in user_files:
+        path = Path(path_str)
+        if path.exists():
+            stat = path.stat()
+            files.append({
+                "name": path.name,
+                "is_dir": path.is_dir(),
+                "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
+                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
     # Sort by mtime descending
     files.sort(key=lambda x: x["mtime"], reverse=True)
     return jsonify(files)
