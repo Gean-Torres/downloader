@@ -1,6 +1,6 @@
 {
   "name": "dlpod",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "yt-dlp + spotdl Web Wrapper",
   "main": "app/main.py",
   "scripts": {

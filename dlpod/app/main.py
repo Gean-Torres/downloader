@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory, Response
 from flask_cors import CORS
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -318,13 +318,26 @@ def cleanup_job_dir(job_dir: Path):
         print(f"Error cleaning up {job_dir}: {exc}")
 
 
-def build_archive(source_dir: Path, archive_title: str) -> Path:
-    zip_path = unique_path(SERVE_DIR / f"{safe_name(archive_title)}.zip")
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(source_dir.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(source_dir))
-    return zip_path
+def stream_folder_as_zip(folder_path: Path):
+    import io
+    import zipfile
+
+    def generator():
+        # We use a memory buffer to store chunks of the ZIP
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+            for path in sorted(folder_path.rglob("*")):
+                if not path.is_file():
+                    continue
+                zf.write(path, path.relative_to(folder_path))
+                # Yield what we have so far
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate()
+        # Finalize and yield remaining
+        yield buf.getvalue()
+
+    return generator()
 
 
 def register_single_artifact(job_id: str, source_file: Path, duplicate_action: str, partial: bool = False) -> None:
@@ -333,25 +346,23 @@ def register_single_artifact(job_id: str, source_file: Path, duplicate_action: s
         if duplicate_action == "override":
             final_dest.unlink()
         elif duplicate_action == "reuse":
-            serve_copy = SERVE_DIR / final_dest.name
-            shutil.copy2(final_dest, serve_copy)
-            finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest, cached=True)], duplicate_used=True)
+            # Serve directly from the existing permanent storage
+            finish(job_id, "done", filename=str(final_dest), serve_path=str(final_dest), artifacts=[artifact_response(final_dest, cached=True)], duplicate_used=True)
             emit(job_id, f"♻ Reused cached file: {final_dest.name}")
             return
         else:
             final_dest = unique_path(final_dest)
 
     shutil.move(str(source_file), str(final_dest))
-    serve_copy = SERVE_DIR / final_dest.name
-    shutil.copy2(final_dest, serve_copy)
-
+    
     # Record download to DB
     with jobs_lock:
         job = jobs.get(job_id, {})
         url, title, fmt = job.get("url", ""), job.get("title", ""), job.get("format", "")
     record_download(url, title, final_dest.name, fmt, str(final_dest))
 
-    finish(job_id, "done", filename=str(final_dest), serve_path=str(serve_copy), artifacts=[artifact_response(final_dest)], partial=partial)
+    # Serve directly from the permanent storage
+    finish(job_id, "done", filename=str(final_dest), serve_path=str(final_dest), artifacts=[artifact_response(final_dest)], partial=partial)
     emit(job_id, f"✅ Ready for browser download: {final_dest.name}")
 
 
@@ -407,9 +418,7 @@ def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, dupli
     if path.is_dir():
         finish(job_id, "done", filename=str(path), serve_path=None, artifacts=[matches[0]], duplicate_used=True, is_playlist=True)
     else:
-        serve_copy = SERVE_DIR / path.name
-        shutil.copy2(path, serve_copy)
-        finish(job_id, "done", filename=str(path), serve_path=str(serve_copy), artifacts=[matches[0]], duplicate_used=True, is_playlist=False)
+        finish(job_id, "done", filename=str(path), serve_path=str(path), artifacts=[matches[0]], duplicate_used=True, is_playlist=False)
     emit(job_id, f"♻ Reused cached download: {path.name}")
     return True
 
@@ -433,7 +442,9 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         output_template = str(job_dir / "%(title).200B [%(id)s].%(ext)s")
         cmd = [
             "yt-dlp", "--newline", "--progress", "--no-part", "--restrict-filenames",
-            "--windows-filenames", "--print", "before_dl:%(title)s", "-o", output_template,
+            "--windows-filenames", "--print", "before_dl:%(title)s", 
+            "--remote-components", "ejs:github",
+            "-o", output_template,
         ]
         if mode == "single":
             cmd.append("--no-playlist")
@@ -787,25 +798,36 @@ def download_direct():
     if not name:
         return jsonify({"error": "Name is required"}), 400
     
-    # Security: prevent path traversal
-    safe_path = (DOWNLOAD_DIR / name).resolve()
-    if not str(safe_path).startswith(str(DOWNLOAD_DIR.resolve())) or not safe_path.exists():
-        return jsonify({"error": "Invalid file path"}), 403
+    try:
+        # Security: prevent path traversal
+        download_dir_abs = DOWNLOAD_DIR.resolve()
+        safe_path = (download_dir_abs / name).resolve()
+        
+        # Robust path traversal check
+        if not safe_path.is_relative_to(download_dir_abs):
+             app.logger.warning(f"Blocked path traversal attempt: {name}")
+             return jsonify({"error": "Invalid file path"}), 403
+             
+        if not safe_path.exists():
+            app.logger.warning(f"File not found: {safe_path}")
+            return jsonify({"error": "File not found"}), 404
 
-    if safe_path.is_file():
-        # Copy to SERVE_DIR to allow gunicorn/flask to serve it without blocking main dir
-        # or just serve directly if we trust it. Let's serve directly for simplicity but 
-        # normally we'd copy to serve_dir to manage lifecycle.
-        # Actually, let's copy to SERVE_DIR so it can be cleaned up by background_cleanup
-        dest = SERVE_DIR / safe_path.name
-        if not dest.exists():
-            shutil.copy2(safe_path, dest)
-        return send_file(dest, as_attachment=True, download_name=dest.name)
-    else:
-        if request.args.get("zip", "").lower() in {"1", "true", "yes"}:
-            zip_path = build_archive(safe_path, safe_path.name)
-            return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
-        return jsonify({"error": "Directory downloads are disabled by default. Request zip=true to download an archive."}), 400
+        if safe_path.is_file():
+            # Serve directly from permanent storage
+            return send_file(safe_path, as_attachment=True, download_name=safe_path.name)
+        else:
+            if request.args.get("zip", "").lower() in {"1", "true", "yes"}:
+                # Stream the folder as a ZIP archive on-the-fly
+                filename = f"{safe_path.name}.zip"
+                return Response(
+                    stream_folder_as_zip(safe_path),
+                    mimetype="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"}
+                )
+            return jsonify({"error": "Directory downloads are disabled by default. Request zip=true to download an archive."}), 400
+    except Exception as e:
+        app.logger.error(f"Error in download_direct: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error", "message": str(e)}), 500
 
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
@@ -858,6 +880,14 @@ def health_check():
 @app.route("/<path:path>")
 def serve_spa(path):
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Log the error and stacktrace
+    app.logger.error(f"Unhandled Exception: {e}", exc_info=True)
+    # Return JSON instead of the default HTML error page
+    return jsonify({"error": "Internal server error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
