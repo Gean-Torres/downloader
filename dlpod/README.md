@@ -148,3 +148,13 @@ location /dlpod/ {
 - Spotify downloads require your own API credentials to avoid rate-limiting (see the "Spotify & Genius Credentials" section).
 - Update yt-dlp regularly — it breaks often as sites change:
   `podman exec dlpod-dlpod-app pip install -U yt-dlp`
+
+## Low-RAM profile (Raspberry Pi)
+
+This repository now ships with a lower-memory default runtime profile:
+
+- `gunicorn` runs with `--workers 1 --threads 1 --worker-class sync`.
+- Pod memory requests/limits are tuned to `64Mi` request and `192Mi` limit in `dlpod-pod.yaml`.
+
+If your workload includes many concurrent downloads, increase memory limit first (for example `256Mi`),
+then increase threads/workers only if needed.

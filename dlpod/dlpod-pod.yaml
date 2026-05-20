@@ -30,9 +30,9 @@ spec:
           name: data-vol
       resources:
         limits:
-          memory: 1Gi
+          memory: 192Mi
         requests:
-          memory: 256Mi
+          memory: 64Mi
   volumes:
     - name: downloads-vol
       hostPath:
