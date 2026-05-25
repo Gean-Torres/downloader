@@ -92,6 +92,23 @@ def test_start_download_no_url(client):
     assert 'error' in response.get_json()
 
 
+def test_start_download_rejects_non_url_input(client):
+    response = client.post('/api/download', json={'url': 'podman run -d --name exporter'})
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'A valid http(s) URL is required'
+
+
+def test_info_rejects_non_url_input(client):
+    response = client.post('/api/info', json={'url': 'Gibson Custom 1957 SJ-200 Reissue'})
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'A valid http(s) URL is required'
+
+
+def test_unknown_route_remains_404(client):
+    response = client.get('/api/does-not-exist')
+    assert response.status_code == 404
+
+
 def test_job_lifecycle_flow(client, monkeypatch):
     """Test the creation and deletion of a job without launching external download tools."""
     class ImmediateThread:

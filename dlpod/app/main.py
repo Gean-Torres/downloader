@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory, Response
 from flask_cors import CORS
+import werkzeug.exceptions
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
@@ -165,45 +166,43 @@ def record_download(url: str, client_id: str | None, title: str, filename: str, 
 
 def sync_downloads_db():
     files = visible_download_files()
-    file_paths = {str(p) for p in files}
-
+    created_job_ids = []
     with jobs_lock:
-        # Get all paths currently tracked in jobs
-        tracked_paths = set()
-        for job in jobs.values():
-            path = job.get("serve_path") or job.get("filename")
-            if path:
-                tracked_paths.add(str(Path(path).resolve()))
+        tracked_paths = {
+            str(Path(path).resolve())
+            for job in jobs.values()
+            if (path := (job.get("serve_path") or job.get("filename")))
+        }
 
-        # Add files that are not in the jobs DB
         for path_obj in files:
             abs_path = str(path_obj.resolve())
-            if abs_path not in tracked_paths:
-                # Create a synthetic "public" job for this file
-                job_id = f"scanned-{uuid.uuid4().hex[:8]}"
-                title = path_obj.stem
-                fmt = path_obj.suffix.lstrip(".") if path_obj.is_file() else "folder"
-                
-                new_job = {
-                    "id": job_id,
-                    "client_id": "public",
-                    "url": "local-file",
-                    "source": "local",
-                    "format": fmt,
-                    "title": title,
-                    "status": "done",
-                    "progress": 100,
-                    "log": ["Detected local file via scan"],
-                    "filename": str(path_obj),
-                    "serve_path": str(path_obj) if path_obj.is_file() else None,
-                    "is_playlist": path_obj.is_dir(),
-                    "dismissed": True,
-                    "started_at": utc_now(),
-                    "finished_at": utc_now(),
-                    "last_activity": utc_now(),
-                }
-                jobs[job_id] = new_job
-                save_job_to_db(job_id)
+            if abs_path in tracked_paths:
+                continue
+
+            job_id = f"scanned-{uuid.uuid4().hex[:8]}"
+            fmt = path_obj.suffix.lstrip(".") if path_obj.is_file() else "folder"
+            jobs[job_id] = {
+                "id": job_id,
+                "client_id": "public",
+                "url": "local-file",
+                "source": "local",
+                "format": fmt,
+                "title": path_obj.stem,
+                "status": "done",
+                "progress": 100,
+                "log": ["Detected local file via scan"],
+                "filename": str(path_obj),
+                "serve_path": str(path_obj) if path_obj.is_file() else None,
+                "is_playlist": path_obj.is_dir(),
+                "dismissed": True,
+                "started_at": utc_now(),
+                "finished_at": utc_now(),
+                "last_activity": utc_now(),
+            }
+            created_job_ids.append(job_id)
+
+    for job_id in created_job_ids:
+        save_job_to_db(job_id)
 
 
 def utc_now() -> str:
@@ -219,6 +218,14 @@ def infer_mode(url: str) -> str:
     if any(token in lowered for token in ("list=", "/playlist", "/album", "/show", "/artist")):
         return "playlist"
     return "single"
+
+
+def is_supported_media_url(value: str) -> bool:
+    try:
+        parsed = urlparse((value or "").strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def safe_name(value: str, fallback: str = "download") -> str:
@@ -665,6 +672,8 @@ def get_info():
     url = data.get("url", "").strip()
     if not url:
         return jsonify({"error": "URL is required"}), 400
+    if not is_supported_media_url(url):
+        return jsonify({"error": "A valid http(s) URL is required"}), 400
 
     source = detect_source(url)
     if source == "spotify":
@@ -738,6 +747,12 @@ def check_duplicates():
     return jsonify({"duplicates": find_duplicates(title, fmt)})
 
 
+@app.route("/api/refresh", methods=["POST"])
+def refresh_download_index():
+    sync_downloads_db()
+    return jsonify({"ok": True, "count": len(visible_download_files())})
+
+
 @app.route("/api/clear", methods=["POST"])
 def clear_jobs():
     client_id = request.headers.get("X-Client-ID")
@@ -774,6 +789,8 @@ def start_download():
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
+    if not is_supported_media_url(url):
+        return jsonify({"error": "A valid http(s) URL is required"}), 400
 
     job_id = str(uuid.uuid4())
     with jobs_lock:
@@ -833,9 +850,10 @@ def list_jobs():
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
+    client_id = request.headers.get("X-Client-ID")
     with jobs_lock:
         job = jobs.get(job_id)
-        if not job:
+        if not job or job.get("dismissed") or job.get("client_id") != client_id:
             return jsonify({"error": "Not found"}), 404
         return jsonify(serializable_job(job))
 
@@ -987,6 +1005,8 @@ def serve_spa(path):
 
 @app.errorhandler(Exception)
 def handle_exception(e):
+    if isinstance(e, werkzeug.exceptions.HTTPException):
+        return e
     # Log the error and stacktrace
     app.logger.error(f"Unhandled Exception: {e}", exc_info=True)
     # Return JSON instead of the default HTML error page
