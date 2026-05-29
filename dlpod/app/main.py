@@ -286,7 +286,37 @@ def visible_download_files() -> list[Path]:
     return files
 
 
+PLACEHOLDER_TITLES = {"", "download", "unknown media"}
+
+
+def is_placeholder_title(title: str | None) -> bool:
+    return safe_name(title or "", fallback="").lower() in PLACEHOLDER_TITLES
+
+
+def find_downloads_by_url(url: str, fmt: str | None = None) -> list[dict]:
+    if not url:
+        return []
+
+    matches = []
+    with sqlite3.connect(DB_PATH) as conn:
+        query = "SELECT path FROM downloads WHERE url = ?"
+        params = [url]
+        if fmt:
+            query += " AND format = ?"
+            params.append(fmt)
+
+        cursor = conn.execute(query, params)
+        for row in cursor:
+            path = Path(row[0])
+            if path.exists():
+                matches.append(artifact_response(path, cached=True))
+    return matches
+
+
 def find_duplicates(title: str, fmt: str | None = None) -> list[dict]:
+    if is_placeholder_title(title):
+        return []
+
     target = safe_name(title).lower()
     matches = []
     if not target:
@@ -472,10 +502,14 @@ def finalize_outputs(job_id: str, job_dir: Path, title: str, mode: str, duplicat
         register_single_artifact(job_id, media_files[0], duplicate_action, partial=partial)
 
 
-def apply_duplicate_policy_before_start(job_id: str, title: str, fmt: str, duplicate_action: str) -> bool:
+def apply_duplicate_policy_before_start(job_id: str, url: str, title: str, fmt: str, duplicate_action: str) -> bool:
     if duplicate_action != "reuse":
         return False
-    matches = find_duplicates(title, fmt)
+
+    matches = find_downloads_by_url(url, fmt)
+    if not matches and not is_placeholder_title(title):
+        matches = find_duplicates(title, fmt)
+
     if not matches:
         return False
     path = Path(matches[0]["path"])
@@ -502,7 +536,7 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         job["last_activity"] = utc_now()
 
     try:
-        if apply_duplicate_policy_before_start(job_id, title, fmt, duplicate_action):
+        if apply_duplicate_policy_before_start(job_id, url, title, fmt, duplicate_action):
             return
 
         output_template = str(job_dir / "%(title).200B [%(id)s].%(ext)s")
@@ -576,7 +610,7 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
         job["last_activity"] = utc_now()
 
     try:
-        if apply_duplicate_policy_before_start(job_id, title, fmt, duplicate_action):
+        if apply_duplicate_policy_before_start(job_id, url, title, fmt, duplicate_action):
             return
 
         output_template = str(job_dir / "{artists} - {title}.{output-ext}")
@@ -783,7 +817,10 @@ def start_download():
     duplicate_action = data.get("duplicate_action", "again")
     if duplicate_action not in {"again", "override", "reuse"}:
         duplicate_action = "again"
-    title = resolve_job_title(url, source, data.get("title"))
+    preferred_title = data.get("title")
+    if is_placeholder_title(preferred_title):
+        preferred_title = None
+    title = resolve_job_title(url, source, preferred_title)
     embed_metadata = bool(data.get("embed_metadata", True))
     advanced = data.get("advanced") if isinstance(data.get("advanced"), dict) else {}
 
