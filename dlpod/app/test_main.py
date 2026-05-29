@@ -287,3 +287,80 @@ def test_reuse_duplicate_policy_allows_exact_url_with_placeholder_title(client):
     assert reused is True
     assert jobs['exact-url-job']['status'] == 'done'
     assert jobs['exact-url-job']['duplicate_used'] is True
+
+
+def test_register_login_and_password_change(client):
+    response = client.post('/api/auth/register', json={
+        'username': 'tester',
+        'email': 'tester@example.test',
+        'password': 'password123',
+    })
+    assert response.status_code == 201
+    data = response.get_json()
+    token = data['token']
+    assert data['user']['username'] == 'tester'
+    assert data['user']['is_admin'] is False
+
+    response = client.get('/api/auth/me', headers={'X-Auth-Token': token})
+    assert response.status_code == 200
+    assert response.get_json()['user']['email'] == 'tester@example.test'
+
+    response = client.post('/api/auth/change-password', headers={'X-Auth-Token': token}, json={
+        'current_password': 'password123',
+        'new_password': 'new-password',
+    })
+    assert response.status_code == 200
+    assert response.get_json()['ok'] is True
+
+    response = client.post('/api/auth/login', json={'identifier': 'tester', 'password': 'new-password'})
+    assert response.status_code == 200
+    assert response.get_json()['user']['username'] == 'tester'
+
+
+def test_hardcoded_admin_username_can_open_administration(client):
+    response = client.post('/api/auth/register', json={
+        'username': 'Gean-Torres',
+        'email': 'gean@example.test',
+        'password': 'admin-pass',
+    })
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data['user']['is_admin'] is True
+
+    response = client.get('/api/admin/users', headers={'X-Auth-Token': data['token']})
+    assert response.status_code == 200
+    users = response.get_json()
+    assert users[0]['username'] == 'Gean-Torres'
+    assert users[0]['is_admin'] is True
+
+
+def test_logged_in_downloads_use_account_client_id(client, monkeypatch):
+    response = client.post('/api/auth/register', json={
+        'username': 'accounted',
+        'email': 'accounted@example.test',
+        'password': 'password123',
+    })
+    token = response.get_json()['token']
+
+    def fake_put(task):
+        return None
+
+    monkeypatch.setattr(main.task_queue, 'put', fake_put)
+    response = client.post(
+        '/api/download',
+        headers={'X-Client-ID': 'browser-client', 'X-Auth-Token': token},
+        json={'url': 'https://youtube.com/watch?v=dQw4w9WgXcQ'},
+    )
+    assert response.status_code == 202
+    job_id = response.get_json()['job_id']
+    assert jobs[job_id]['client_id'].startswith('user:')
+
+    response = client.get('/api/jobs', headers={'X-Client-ID': 'other-browser', 'X-Auth-Token': token})
+    assert response.status_code == 200
+    assert response.get_json()[0]['id'] == job_id
+
+
+def test_email_recovery_placeholder(client):
+    response = client.post('/api/auth/recover', json={'email': 'tester@example.test'})
+    assert response.status_code == 501
+    assert response.get_json()['error'] == 'Email recovery is not implemented yet'

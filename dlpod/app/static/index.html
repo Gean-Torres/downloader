@@ -256,7 +256,7 @@
   .field { margin-bottom: 16px; }
   label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.9px; }
 
-  input[type=text], select {
+  input[type=text], input[type=email], input[type=password], select {
     width: 100%;
     background: var(--surface-soft);
     border: 1px solid var(--border);
@@ -385,6 +385,7 @@
   </div>
   <div class="header-meta" data-i18n="header_meta">Media Fetcher • Online</div>
   <div class="header-actions">
+    <button type="button" class="btn btn-ghost" id="auth-btn" style="padding: 7px 11px; font-size: 10px;" data-i18n="auth_btn">Login / Register</button>
     <button type="button" class="btn btn-ghost" id="settings-btn" style="padding: 7px 11px; font-size: 10px;" data-i18n="settings_btn">Themes & Effects</button>
     <select id="lang-selector" aria-label="Language" style="width: auto; padding: 7px 10px; font-size: 10px; height: auto;">
       <option value="en">English</option>
@@ -534,6 +535,69 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="auth-modal-overlay">
+  <div class="modal" style="max-width: 540px;">
+    <div class="modal-header">
+      <span style="font-size: 10px; text-transform: uppercase;" data-i18n="auth_title">Account</span>
+      <button type="button" class="btn btn-ghost" onclick="closeAuthModal()" style="padding: 2px 8px;">✕</button>
+    </div>
+    <div class="modal-body" style="background: var(--surface); color: var(--text);">
+      <div class="settings-grid">
+        <div id="auth-status" class="settings-note">Use an account to keep track of files across browsers.</div>
+        <div class="row">
+          <button type="button" class="btn btn-ghost" id="auth-tab-login" data-auth-tab="login">Login</button>
+          <button type="button" class="btn btn-ghost" id="auth-tab-register" data-auth-tab="register">Register</button>
+        </div>
+
+        <form id="login-form" class="settings-grid">
+          <div class="field" style="margin-bottom: 0;">
+            <label for="login-identifier" data-i18n="login_identifier">Username or Email</label>
+            <input type="text" id="login-identifier" autocomplete="username" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="login-password" data-i18n="password_label">Password</label>
+            <input type="password" id="login-password" autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-primary" data-i18n="login_btn">Login</button>
+        </form>
+
+        <form id="register-form" class="settings-grid" style="display:none;">
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-username" data-i18n="username_label">Username</label>
+            <input type="text" id="register-username" autocomplete="username" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-email" data-i18n="email_label">Email</label>
+            <input type="email" id="register-email" autocomplete="email" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-password" data-i18n="password_label">Password</label>
+            <input type="password" id="register-password" autocomplete="new-password" />
+            <div class="settings-note" data-i18n="password_hint">Any length is allowed; 8+ characters is recommended.</div>
+          </div>
+          <button type="submit" class="btn btn-primary" data-i18n="register_btn">Create Account</button>
+        </form>
+
+        <div id="account-panel" class="settings-grid" style="display:none; border-top: 1px solid var(--border); padding-top: 12px;">
+          <div class="section-title" style="margin-bottom: 0;" data-i18n="account_tools">Account Tools</div>
+          <form id="password-form" class="settings-grid">
+            <input type="password" id="current-password" data-i18n-placeholder="current_password" placeholder="Current password" autocomplete="current-password" />
+            <input type="password" id="new-password" data-i18n-placeholder="new_password" placeholder="New password" autocomplete="new-password" />
+            <button type="submit" class="btn btn-ghost" data-i18n="change_password_btn">Change Password</button>
+          </form>
+          <button type="button" class="btn btn-ghost" id="recover-btn" data-i18n="recovery_btn">Email Recovery (not implemented)</button>
+          <button type="button" class="btn btn-ghost" id="admin-btn" style="display:none;" data-i18n="admin_btn">Administration</button>
+          <button type="button" class="btn btn-danger" id="logout-btn" data-i18n="logout_btn">Logout</button>
+          <div id="admin-panel" class="settings-grid" style="display:none;">
+            <div class="section-title" style="margin-bottom: 0;" data-i18n="admin_title">Administration</div>
+            <div id="admin-users" class="settings-note"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="settings-modal-overlay">
   <div class="modal" style="max-width: 480px;">
     <div class="modal-header">
@@ -646,6 +710,23 @@ const i18n = {
     'files_note': 'Note: Private files are visible only to you. Public files were added manually or detected on the server and are visible to everyone.',
     'no_files': 'No files found in download directory',
     'folder_warn': 'FOLDER (ZIPS ON DOWNLOAD)',
+    'auth_btn': 'Login / Register',
+    'auth_title': 'Account',
+    'login_identifier': 'Username or Email',
+    'username_label': 'Username',
+    'email_label': 'Email',
+    'password_label': 'Password',
+    'password_hint': 'Any length is allowed; 8+ characters is recommended.',
+    'login_btn': 'Login',
+    'register_btn': 'Create Account',
+    'account_tools': 'Account Tools',
+    'current_password': 'Current password',
+    'new_password': 'New password',
+    'change_password_btn': 'Change Password',
+    'recovery_btn': 'Email Recovery (not implemented)',
+    'admin_btn': 'Administration',
+    'admin_title': 'Administration',
+    'logout_btn': 'Logout',
     'settings_btn': 'Themes & Effects',
     'settings_title': 'Themes & Visual Effects',
     'theme_label': 'Theme',
@@ -727,6 +808,23 @@ const i18n = {
     'files_note': 'Nota: Arquivos Privados são visíveis apenas para você. Arquivos Públicos foram adicionados manualmente ou detectados no servidor e são visíveis para todos.',
     'no_files': 'Nenhum arquivo encontrado no diretório de downloads',
     'folder_warn': 'PASTA (SERÁ COMPACTADA)',
+    'auth_btn': 'Entrar / Registrar',
+    'auth_title': 'Conta',
+    'login_identifier': 'Usuário ou Email',
+    'username_label': 'Nome de usuário',
+    'email_label': 'Email',
+    'password_label': 'Senha',
+    'password_hint': 'Qualquer tamanho é permitido; 8+ caracteres é recomendado.',
+    'login_btn': 'Entrar',
+    'register_btn': 'Criar Conta',
+    'account_tools': 'Ferramentas da Conta',
+    'current_password': 'Senha atual',
+    'new_password': 'Nova senha',
+    'change_password_btn': 'Alterar Senha',
+    'recovery_btn': 'Recuperação por email (não implementada)',
+    'admin_btn': 'Administração',
+    'admin_title': 'Administração',
+    'logout_btn': 'Sair',
     'settings_btn': 'Temas e Efeitos',
     'settings_title': 'Temas e Efeitos Visuais',
     'theme_label': 'Tema',
@@ -771,9 +869,13 @@ const clientId = (() => {
   return id;
 })();
 
+let authToken = localStorage.getItem('dlpod_auth_token') || '';
+let currentUser = null;
+
 async function apiFetch(url, options = {}) {
   options.headers = options.headers || {};
   options.headers['X-Client-ID'] = clientId;
+  if (authToken) options.headers['X-Auth-Token'] = authToken;
   return fetch(url, options);
 }
 
@@ -832,6 +934,16 @@ const embedToggle = document.getElementById('embed-toggle');
 const autodlToggle = document.getElementById('autodl-toggle');
 const modeSelect = document.getElementById('mode-select');
 const duplicateSelect = document.getElementById('duplicate-select');
+const authBtn = document.getElementById('auth-btn');
+const authModal = document.getElementById('auth-modal-overlay');
+const authStatus = document.getElementById('auth-status');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+const accountPanel = document.getElementById('account-panel');
+const passwordForm = document.getElementById('password-form');
+const adminBtn = document.getElementById('admin-btn');
+const adminPanel = document.getElementById('admin-panel');
+const adminUsers = document.getElementById('admin-users');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal-overlay');
 const themeSelect = document.getElementById('theme-select');
@@ -923,6 +1035,170 @@ effectsToggle.addEventListener('change', (e) => applyEffects(e.target.checked));
 weatherSelect.addEventListener('change', (e) => applyWeather(e.target.value));
 settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettingsModal();
+});
+
+
+
+function openAuthModal() {
+  authModal.classList.add('open');
+  updateAuthUi();
+}
+
+function closeAuthModal() {
+  authModal.classList.remove('open');
+}
+
+function setAuthTab(tab) {
+  const isRegister = tab === 'register';
+  loginForm.style.display = isRegister ? 'none' : 'grid';
+  registerForm.style.display = isRegister ? 'grid' : 'none';
+}
+
+function storeSession(data) {
+  authToken = data.token || '';
+  currentUser = data.user || null;
+  if (authToken) localStorage.setItem('dlpod_auth_token', authToken);
+  else localStorage.removeItem('dlpod_auth_token');
+  updateAuthUi();
+  fetchJobs();
+  fetchFiles();
+}
+
+function updateAuthUi() {
+  if (currentUser) {
+    const adminText = currentUser.is_admin ? ' • admin' : '';
+    authBtn.textContent = `${currentUser.username}${adminText}`;
+    authStatus.textContent = `Signed in as ${currentUser.username} (${currentUser.email})${adminText}. Your new downloads and files are tied to this account.`;
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'none';
+    accountPanel.style.display = 'grid';
+    adminBtn.style.display = currentUser.is_admin ? 'block' : 'none';
+  } else {
+    authBtn.textContent = t('auth_btn');
+    authStatus.textContent = 'Use an account to keep track of files across browsers.';
+    accountPanel.style.display = 'none';
+    setAuthTab('login');
+  }
+}
+
+async function loadCurrentUser() {
+  if (!authToken) {
+    updateAuthUi();
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/auth/me');
+    const data = await res.json();
+    currentUser = data.user || null;
+    if (!currentUser) {
+      authToken = '';
+      localStorage.removeItem('dlpod_auth_token');
+    }
+  } catch {
+    currentUser = null;
+  }
+  updateAuthUi();
+}
+
+async function submitAuth(url, payload) {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Authentication failed');
+  storeSession(data);
+  showNotif(currentUser ? `Signed in as ${currentUser.username}` : 'Signed in');
+}
+
+authBtn.addEventListener('click', openAuthModal);
+authModal.addEventListener('click', (e) => {
+  if (e.target === authModal) closeAuthModal();
+});
+document.querySelectorAll('[data-auth-tab]').forEach(btn => btn.addEventListener('click', () => setAuthTab(btn.dataset.authTab)));
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await submitAuth('/api/auth/login', {
+      identifier: document.getElementById('login-identifier').value.trim(),
+      password: document.getElementById('login-password').value
+    });
+  } catch (err) {
+    showNotif(err.message, 'error');
+  }
+});
+
+registerForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.getElementById('register-password').value;
+  if (password.length > 0 && password.length < 8 && !confirm('This password is shorter than the recommended 8 characters. Continue?')) return;
+  try {
+    await submitAuth('/api/auth/register', {
+      username: document.getElementById('register-username').value.trim(),
+      email: document.getElementById('register-email').value.trim(),
+      password
+    });
+  } catch (err) {
+    showNotif(err.message, 'error');
+  }
+});
+
+passwordForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const res = await apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_password: document.getElementById('current-password').value,
+        new_password: document.getElementById('new-password').value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change password');
+    passwordForm.reset();
+    showNotif('Password changed');
+  } catch (err) {
+    showNotif(err.message, 'error');
+  }
+});
+
+document.getElementById('recover-btn').addEventListener('click', async () => {
+  try {
+    const res = await apiFetch('/api/auth/recover', { method: 'POST' });
+    const data = await res.json();
+    showNotif(data.error || 'Email recovery is not implemented yet', 'warn');
+  } catch {
+    showNotif('Email recovery is not implemented yet', 'warn');
+  }
+});
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await apiFetch('/api/auth/logout', { method: 'POST' });
+  authToken = '';
+  currentUser = null;
+  localStorage.removeItem('dlpod_auth_token');
+  updateAuthUi();
+  fetchJobs();
+  fetchFiles();
+  showNotif('Logged out');
+});
+
+adminBtn.addEventListener('click', async () => {
+  const open = adminPanel.style.display !== 'none';
+  adminPanel.style.display = open ? 'none' : 'grid';
+  if (open) return;
+  adminUsers.textContent = 'Loading users...';
+  try {
+    const res = await apiFetch('/api/admin/users');
+    const users = await res.json();
+    if (!res.ok) throw new Error(users.error || 'Admin request failed');
+    adminUsers.innerHTML = users.map(user => `<div>${escapeHtml(user.username)} &lt;${escapeHtml(user.email)}&gt;${user.is_admin ? ' • admin' : ''}</div>`).join('') || 'No users yet.';
+  } catch (err) {
+    adminUsers.textContent = err.message;
+  }
 });
 
 
@@ -1178,6 +1454,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAppearance();
   applyTranslations();
   applyRememberedSelections();
+  loadCurrentUser().then(() => fetchJobs());
   fetchMetadata();
 });
 
@@ -1516,7 +1793,6 @@ function openPlayer(encodedName) {
 }
 
 startPolling(2000);
-fetchJobs();
 </script>
 </body>
 </html>
