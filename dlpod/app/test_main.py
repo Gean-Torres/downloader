@@ -234,3 +234,56 @@ def test_refresh_endpoint(client, tmp_path):
     duplicates = response.get_json()["duplicates"]
     assert len(duplicates) == 1
     assert duplicates[0]["name"] == "manual_file.mp3"
+
+
+def test_duplicates_endpoint_ignores_placeholder_title(client):
+    cached = main.DOWNLOAD_DIR / 'download.mp3'
+    cached.write_bytes(b'audio')
+
+    response = client.post('/api/duplicates', json={'title': 'download', 'format': 'mp3'})
+
+    assert response.status_code == 200
+    assert response.get_json()['duplicates'] == []
+
+
+def test_reuse_duplicate_policy_prefers_exact_url_for_placeholder_title(client):
+    cached = main.DOWNLOAD_DIR / 'download.mp3'
+    cached.write_bytes(b'audio')
+    with main.sqlite3.connect(main.DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO downloads (url, client_id, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('https://example.test/original', 'client', 'download', cached.name, 'mp3', str(cached), main.utc_now())
+        )
+
+    make_running_job('placeholder-job', mode='single')
+    jobs['placeholder-job']['title'] = 'download'
+    jobs['placeholder-job']['url'] = 'https://example.test/new-link'
+
+    reused = main.apply_duplicate_policy_before_start(
+        'placeholder-job', 'https://example.test/new-link', 'download', 'mp3', 'reuse'
+    )
+
+    assert reused is False
+    assert jobs['placeholder-job']['status'] == 'running'
+
+
+def test_reuse_duplicate_policy_allows_exact_url_with_placeholder_title(client):
+    cached = main.DOWNLOAD_DIR / 'download.mp3'
+    cached.write_bytes(b'audio')
+    with main.sqlite3.connect(main.DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO downloads (url, client_id, title, filename, format, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('https://example.test/original', 'client', 'download', cached.name, 'mp3', str(cached), main.utc_now())
+        )
+
+    make_running_job('exact-url-job', mode='single')
+    jobs['exact-url-job']['title'] = 'download'
+    jobs['exact-url-job']['url'] = 'https://example.test/original'
+
+    reused = main.apply_duplicate_policy_before_start(
+        'exact-url-job', 'https://example.test/original', 'download', 'mp3', 'reuse'
+    )
+
+    assert reused is True
+    assert jobs['exact-url-job']['status'] == 'done'
+    assert jobs['exact-url-job']['duplicate_used'] is True
