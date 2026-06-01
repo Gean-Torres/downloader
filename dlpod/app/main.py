@@ -100,7 +100,6 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         """)
-
         # Migration: add client_id to jobs if missing
         cursor = conn.execute("PRAGMA table_info(jobs)")
         columns = [row[1] for row in cursor.fetchall()]
@@ -204,16 +203,18 @@ def client_id_for_user(user: dict | None, fallback: str | None = None) -> str | 
 def owner_label(client_id: str | None) -> str:
     if not client_id:
         return "unlogged"
-    if client_id == "public":
+    cid = str(client_id)
+    if cid == "public":
         return "public"
-    if client_id.startswith("user:"):
-        user_id = client_id.split(":", 1)[1]
-        with sqlite3.connect(DB_PATH) as conn:
-            row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
-        return row[0] if row else "deleted user"
+    if cid.startswith("user:"):
+        user_id = cid.split(":", 1)[1]
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+            return row[0] if row else "deleted user"
+        except sqlite3.Error:
+            return "unknown user"
     return "unlogged"
-
-
 def create_auth_token(user_id: str) -> str:
     token = uuid.uuid4().hex + uuid.uuid4().hex
     with sqlite3.connect(DB_PATH) as conn:
@@ -908,7 +909,6 @@ def register_user():
                 if existing["username"].lower() == username.lower():
                     return jsonify({"error": "Username is already registered"}), 409
                 return jsonify({"error": "Email is already registered"}), 409
-
             conn.execute(
                 """
                 INSERT INTO users (id, username, email, password_hash, is_admin, created_at)
