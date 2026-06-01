@@ -256,7 +256,7 @@
   .field { margin-bottom: 16px; }
   label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.9px; }
 
-  input[type=text], select {
+  input[type=text], input[type=email], input[type=password], select {
     width: 100%;
     background: var(--surface-soft);
     border: 1px solid var(--border);
@@ -385,6 +385,7 @@
   </div>
   <div class="header-meta" data-i18n="header_meta">Media Fetcher • Online</div>
   <div class="header-actions">
+    <button type="button" class="btn btn-ghost" id="auth-btn" style="padding: 7px 11px; font-size: 10px;" data-i18n="auth_btn">Login / Register</button>
     <button type="button" class="btn btn-ghost" id="settings-btn" style="padding: 7px 11px; font-size: 10px;" data-i18n="settings_btn">Themes & Effects</button>
     <select id="lang-selector" aria-label="Language" style="width: auto; padding: 7px 10px; font-size: 10px; height: auto;">
       <option value="en">English</option>
@@ -485,7 +486,12 @@
     <div class="panel-card">
       <div class="section-title" style="justify-content: space-between;">
         <span data-i18n="active_jobs">Active & Recent Jobs</span>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <select id="job-scope-select" style="display:none; width: auto; padding: 2px 8px; font-size: 9px; height: auto;">
+            <option value="mine" data-i18n="scope_mine">My downloads</option>
+            <option value="all" data-i18n="scope_all">All downloads</option>
+            <option value="unlogged" data-i18n="scope_unlogged">Unlogged users</option>
+          </select>
           <button type="button" class="btn btn-ghost" id="files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="files_btn">Files</button>
           <a class="btn btn-ghost" id="media-link" style="padding: 2px 8px; font-size: 9px; text-decoration: none;" href="https://copyparty.server.lan/Downloads/media/" target="_blank" rel="noopener" data-i18n="media_link">Media Folder</a>
           <button type="button" class="btn btn-ghost" id="clear-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="clear_btn">Clear All</button>
@@ -510,7 +516,12 @@
   <div class="modal">
     <div class="modal-header">
       <span style="font-size: 10px; text-transform: uppercase;" data-i18n="all_files">All Downloaded Files</span>
-      <div style="display: flex; gap: 8px;">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <select id="file-scope-select" style="display:none; width: auto; padding: 2px 8px; font-size: 9px; height: auto;">
+          <option value="mine" data-i18n="scope_mine">My downloads</option>
+          <option value="all" data-i18n="scope_all">All downloads</option>
+          <option value="unlogged" data-i18n="scope_unlogged">Unlogged users</option>
+        </select>
         <button type="button" class="btn btn-ghost" id="refresh-files-btn" style="padding: 2px 8px; font-size: 9px;" data-i18n="refresh_btn">Refresh</button>
         <button type="button" class="btn btn-ghost" onclick="closeFilesModal()" style="padding: 2px 8px;">✕</button>
       </div>
@@ -531,6 +542,69 @@
       <button type="button" class="btn btn-ghost" onclick="closePlayerModal()" style="padding: 2px 8px;">✕</button>
     </div>
     <div class="modal-body" id="player-modal-body" style="background: var(--surface); color: var(--text);"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="auth-modal-overlay">
+  <div class="modal" style="max-width: 540px;">
+    <div class="modal-header">
+      <span style="font-size: 10px; text-transform: uppercase;" data-i18n="auth_title">Account</span>
+      <button type="button" class="btn btn-ghost" onclick="closeAuthModal()" style="padding: 2px 8px;">✕</button>
+    </div>
+    <div class="modal-body" style="background: var(--surface); color: var(--text);">
+      <div class="settings-grid">
+        <div id="auth-status" class="settings-note">Use an account to keep track of files across browsers.</div>
+        <div class="row" id="auth-tabs">
+          <button type="button" class="btn btn-ghost" id="auth-tab-login" data-auth-tab="login">Login</button>
+          <button type="button" class="btn btn-ghost" id="auth-tab-register" data-auth-tab="register">Register</button>
+        </div>
+
+        <form id="login-form" class="settings-grid">
+          <div class="field" style="margin-bottom: 0;">
+            <label for="login-identifier" data-i18n="login_identifier">Username or Email</label>
+            <input type="text" id="login-identifier" autocomplete="username" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="login-password" data-i18n="password_label">Password</label>
+            <input type="password" id="login-password" autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-primary" data-i18n="login_btn">Login</button>
+        </form>
+
+        <form id="register-form" class="settings-grid" style="display:none;">
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-username" data-i18n="username_label">Username</label>
+            <input type="text" id="register-username" autocomplete="username" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-email" data-i18n="email_label">Email</label>
+            <input type="email" id="register-email" autocomplete="email" />
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label for="register-password" data-i18n="password_label">Password</label>
+            <input type="password" id="register-password" autocomplete="new-password" />
+            <div class="settings-note" data-i18n="password_hint">Any length is allowed; 8+ characters is recommended.</div>
+          </div>
+          <button type="submit" class="btn btn-primary" data-i18n="register_btn">Create Account</button>
+        </form>
+
+        <div id="account-panel" class="settings-grid" style="display:none; border-top: 1px solid var(--border); padding-top: 12px;">
+          <div class="section-title" style="margin-bottom: 0;" data-i18n="account_tools">Account Tools</div>
+          <form id="password-form" class="settings-grid">
+            <input type="password" id="current-password" data-i18n-placeholder="current_password" placeholder="Current password" autocomplete="current-password" />
+            <input type="password" id="new-password" data-i18n-placeholder="new_password" placeholder="New password" autocomplete="new-password" />
+            <button type="submit" class="btn btn-ghost" data-i18n="change_password_btn">Change Password</button>
+          </form>
+          <button type="button" class="btn btn-ghost" id="recover-btn" data-i18n="recovery_btn">Email Recovery (not implemented)</button>
+          <button type="button" class="btn btn-ghost" id="admin-btn" style="display:none;" data-i18n="admin_btn">Administration</button>
+          <button type="button" class="btn btn-danger" id="logout-btn" data-i18n="logout_btn">Logout</button>
+          <div id="admin-panel" class="settings-grid" style="display:none;">
+            <div class="section-title" style="margin-bottom: 0;" data-i18n="admin_title">Administration</div>
+            <div id="admin-users" class="settings-note"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -640,12 +714,34 @@ const i18n = {
     'playlist_label': 'PLAYLIST/ALBUM',
     'single_label': 'SINGLE',
     'files_btn': 'Files',
+    'scope_mine': 'My downloads',
+    'scope_all': 'All downloads',
+    'scope_unlogged': 'Unlogged users',
+    'owner_label': 'Owner',
+    'delete_file_btn': 'Delete',
     'all_files': 'All Downloaded Files',
     'refresh_btn': 'Refresh',
     'scan_btn': 'Scan Folder',
     'files_note': 'Note: Private files are visible only to you. Public files were added manually or detected on the server and are visible to everyone.',
     'no_files': 'No files found in download directory',
     'folder_warn': 'FOLDER (ZIPS ON DOWNLOAD)',
+    'auth_btn': 'Login / Register',
+    'auth_title': 'Account',
+    'login_identifier': 'Username or Email',
+    'username_label': 'Username',
+    'email_label': 'Email',
+    'password_label': 'Password',
+    'password_hint': 'Any length is allowed; 8+ characters is recommended.',
+    'login_btn': 'Login',
+    'register_btn': 'Create Account',
+    'account_tools': 'Account Tools',
+    'current_password': 'Current password',
+    'new_password': 'New password',
+    'change_password_btn': 'Change Password',
+    'recovery_btn': 'Email Recovery (not implemented)',
+    'admin_btn': 'Administration',
+    'admin_title': 'Administration',
+    'logout_btn': 'Logout',
     'settings_btn': 'Themes & Effects',
     'settings_title': 'Themes & Visual Effects',
     'theme_label': 'Theme',
@@ -721,12 +817,34 @@ const i18n = {
     'playlist_label': 'PLAYLIST/ÁLBUM',
     'single_label': 'ÚNICO',
     'files_btn': 'Arquivos',
+    'scope_mine': 'Meus downloads',
+    'scope_all': 'Todos os downloads',
+    'scope_unlogged': 'Usuários sem login',
+    'owner_label': 'Dono',
+    'delete_file_btn': 'Excluir',
     'all_files': 'Todos os Arquivos Baixados',
     'refresh_btn': 'Atualizar',
     'scan_btn': 'Escanear Pasta',
     'files_note': 'Nota: Arquivos Privados são visíveis apenas para você. Arquivos Públicos foram adicionados manualmente ou detectados no servidor e são visíveis para todos.',
     'no_files': 'Nenhum arquivo encontrado no diretório de downloads',
     'folder_warn': 'PASTA (SERÁ COMPACTADA)',
+    'auth_btn': 'Entrar / Registrar',
+    'auth_title': 'Conta',
+    'login_identifier': 'Usuário ou Email',
+    'username_label': 'Nome de usuário',
+    'email_label': 'Email',
+    'password_label': 'Senha',
+    'password_hint': 'Qualquer tamanho é permitido; 8+ caracteres é recomendado.',
+    'login_btn': 'Entrar',
+    'register_btn': 'Criar Conta',
+    'account_tools': 'Ferramentas da Conta',
+    'current_password': 'Senha atual',
+    'new_password': 'Nova senha',
+    'change_password_btn': 'Alterar Senha',
+    'recovery_btn': 'Recuperação por email (não implementada)',
+    'admin_btn': 'Administração',
+    'admin_title': 'Administração',
+    'logout_btn': 'Sair',
     'settings_btn': 'Temas e Efeitos',
     'settings_title': 'Temas e Efeitos Visuais',
     'theme_label': 'Tema',
@@ -771,9 +889,13 @@ const clientId = (() => {
   return id;
 })();
 
+let authToken = localStorage.getItem('dlpod_auth_token') || '';
+let currentUser = null;
+
 async function apiFetch(url, options = {}) {
   options.headers = options.headers || {};
   options.headers['X-Client-ID'] = clientId;
+  if (authToken) options.headers['X-Auth-Token'] = authToken;
   return fetch(url, options);
 }
 
@@ -832,6 +954,17 @@ const embedToggle = document.getElementById('embed-toggle');
 const autodlToggle = document.getElementById('autodl-toggle');
 const modeSelect = document.getElementById('mode-select');
 const duplicateSelect = document.getElementById('duplicate-select');
+const authBtn = document.getElementById('auth-btn');
+const authModal = document.getElementById('auth-modal-overlay');
+const authStatus = document.getElementById('auth-status');
+const authTabs = document.getElementById('auth-tabs');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+const accountPanel = document.getElementById('account-panel');
+const passwordForm = document.getElementById('password-form');
+const adminBtn = document.getElementById('admin-btn');
+const adminPanel = document.getElementById('admin-panel');
+const adminUsers = document.getElementById('admin-users');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal-overlay');
 const themeSelect = document.getElementById('theme-select');
@@ -841,6 +974,8 @@ const weatherLayer = document.getElementById('weather-layer');
 const advancedToggle = document.getElementById('advanced-toggle');
 const advancedFields = document.getElementById('advanced-fields');
 const lockDlToggle = document.getElementById('lock-dl-toggle');
+const jobScopeSelect = document.getElementById('job-scope-select');
+const fileScopeSelect = document.getElementById('file-scope-select');
 
 
 function rebuildWeatherParticles(effect) {
@@ -923,6 +1058,176 @@ effectsToggle.addEventListener('change', (e) => applyEffects(e.target.checked));
 weatherSelect.addEventListener('change', (e) => applyWeather(e.target.value));
 settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettingsModal();
+});
+
+
+
+function openAuthModal() {
+  authModal.classList.add('open');
+  updateAuthUi();
+}
+
+function closeAuthModal() {
+  authModal.classList.remove('open');
+}
+
+function setAuthTab(tab) {
+  const isRegister = tab === 'register';
+  loginForm.style.display = isRegister ? 'none' : 'grid';
+  registerForm.style.display = isRegister ? 'grid' : 'none';
+}
+
+function storeSession(data) {
+  authToken = data.token || '';
+  currentUser = data.user || null;
+  if (authToken) localStorage.setItem('dlpod_auth_token', authToken);
+  else localStorage.removeItem('dlpod_auth_token');
+  updateAuthUi();
+  fetchJobs();
+  fetchFiles();
+}
+
+function updateAuthUi() {
+  if (currentUser) {
+    const adminText = currentUser.is_admin ? ' • admin' : '';
+    authBtn.textContent = `${currentUser.username}${adminText}`;
+    authStatus.textContent = `Signed in as ${currentUser.username} (${currentUser.email})${adminText}. Your new downloads and files are tied to this account.`;
+    authTabs.style.display = 'none';
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'none';
+    accountPanel.style.display = 'grid';
+    adminBtn.style.display = currentUser.is_admin ? 'block' : 'none';
+    jobScopeSelect.style.display = currentUser.is_admin ? 'block' : 'none';
+    if (fileScopeSelect) fileScopeSelect.style.display = currentUser.is_admin ? 'block' : 'none';
+  } else {
+    authBtn.textContent = t('auth_btn');
+    authStatus.textContent = 'Use an account to keep track of files across browsers.';
+    authTabs.style.display = 'grid';
+    accountPanel.style.display = 'none';
+    jobScopeSelect.style.display = 'none';
+    if (fileScopeSelect) fileScopeSelect.style.display = 'none';
+    setAuthTab('login');
+  }
+}
+
+async function loadCurrentUser() {
+  if (!authToken) {
+    updateAuthUi();
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/auth/me');
+    const data = await res.json();
+    currentUser = data.user || null;
+    if (!currentUser) {
+      authToken = '';
+      localStorage.removeItem('dlpod_auth_token');
+    }
+  } catch {
+    currentUser = null;
+  }
+  updateAuthUi();
+}
+
+async function submitAuth(url, payload) {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Authentication failed');
+  storeSession(data);
+  showNotification(currentUser ? `Signed in as ${currentUser.username}` : 'Signed in');
+}
+
+authBtn.addEventListener('click', openAuthModal);
+authModal.addEventListener('click', (e) => {
+  if (e.target === authModal) closeAuthModal();
+});
+document.querySelectorAll('[data-auth-tab]').forEach(btn => btn.addEventListener('click', () => setAuthTab(btn.dataset.authTab)));
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await submitAuth('/api/auth/login', {
+      identifier: document.getElementById('login-identifier').value.trim(),
+      password: document.getElementById('login-password').value
+    });
+  } catch (err) {
+    showNotification(err.message, 'error');
+  }
+});
+
+registerForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.getElementById('register-password').value;
+  if (password.length > 0 && password.length < 8 && !confirm('This password is shorter than the recommended 8 characters. Continue?')) return;
+  try {
+    await submitAuth('/api/auth/register', {
+      username: document.getElementById('register-username').value.trim(),
+      email: document.getElementById('register-email').value.trim(),
+      password
+    });
+  } catch (err) {
+    showNotification(err.message, 'error');
+  }
+});
+
+passwordForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const res = await apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_password: document.getElementById('current-password').value,
+        new_password: document.getElementById('new-password').value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change password');
+    passwordForm.reset();
+    showNotification('Password changed');
+  } catch (err) {
+    showNotification(err.message, 'error');
+  }
+});
+
+document.getElementById('recover-btn').addEventListener('click', async () => {
+  try {
+    const res = await apiFetch('/api/auth/recover', { method: 'POST' });
+    const data = await res.json();
+    showNotification(data.error || 'Email recovery is not implemented yet', 'warn');
+  } catch {
+    showNotification('Email recovery is not implemented yet', 'warn');
+  }
+});
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await apiFetch('/api/auth/logout', { method: 'POST' });
+  authToken = '';
+  currentUser = null;
+  localStorage.removeItem('dlpod_auth_token');
+  updateAuthUi();
+  fetchJobs();
+  fetchFiles();
+  showNotification('Logged out');
+});
+
+adminBtn.addEventListener('click', async () => {
+  const open = adminPanel.style.display !== 'none';
+  adminPanel.style.display = open ? 'none' : 'grid';
+  if (open) return;
+  adminUsers.textContent = 'Loading users...';
+  try {
+    const res = await apiFetch('/api/admin/users');
+    const users = await res.json();
+    if (!res.ok) throw new Error(users.error || 'Admin request failed');
+    adminUsers.innerHTML = users.map(user => `<div>${escapeHtml(user.username)} &lt;${escapeHtml(user.email)}&gt;${user.is_admin ? ' • admin' : ''}</div>`).join('') || 'No users yet.';
+  } catch (err) {
+    adminUsers.textContent = err.message;
+  }
 });
 
 
@@ -1178,6 +1483,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAppearance();
   applyTranslations();
   applyRememberedSelections();
+  loadCurrentUser().then(() => fetchJobs());
   fetchMetadata();
 });
 
@@ -1234,7 +1540,8 @@ dlBtn.addEventListener('click', async () => {
 
 async function fetchJobs() {
   try {
-    const res = await apiFetch('/api/jobs');
+    const scope = currentUser?.is_admin ? jobScopeSelect.value : 'mine';
+    const res = await apiFetch(`/api/jobs?scope=${encodeURIComponent(scope)}`);
     if (!res.ok) {
        console.error('Jobs poll failed', res.status);
        return; // Don't clear UI if server is temporarily down
@@ -1351,6 +1658,7 @@ function renderJobs(list) {
         </div>
         <div class="job-meta">
           <span>${escapeHtml(job.source)}</span>
+          ${currentUser?.is_admin ? `<span>${t('owner_label')}: ${escapeHtml(job.owner || 'unknown')}</span>` : ''}
           <span>${escapeHtml(job.format)}</span>
           <span>${job.is_playlist ? t('mode_playlist') : t('mode_single')}</span>
           ${job.item_count ? `<span>${job.item_count} item${job.item_count === 1 ? '' : 's'}</span>` : ''}
@@ -1424,6 +1732,8 @@ filesBtn.addEventListener('click', () => {
 });
 
 refreshFilesBtn.addEventListener('click', fetchFiles);
+jobScopeSelect.addEventListener('change', fetchJobs);
+fileScopeSelect.addEventListener('change', fetchFiles);
 
 function closeFilesModal() {
   filesModal.classList.remove('open');
@@ -1432,7 +1742,8 @@ function closeFilesModal() {
 async function fetchFiles() {
   filesList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--muted);">Loading...</div>';
   try {
-    const res = await apiFetch('/api/files');
+    const scope = currentUser?.is_admin ? fileScopeSelect.value : 'mine';
+    const res = await apiFetch(`/api/files?scope=${encodeURIComponent(scope)}`);
     const data = await res.json();
     renderFiles(data);
   } catch (e) {
@@ -1474,7 +1785,8 @@ function renderFiles(files) {
             ${icon} ${escapeHtml(file.name)}
           </div>
           <div style="font-size: 9px; color: var(--muted); text-transform: uppercase; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
-            ${file.is_public ? `<span style="background: var(--accent2); color: #fff; padding: 0 4px; border-radius: 2px;">PUBLIC</span>` : `<span style="background: var(--green); color: #000; padding: 0 4px; border-radius: 2px;">PRIVATE</span>`}
+            ${file.is_public ? `<span style="background: var(--accent2); color: #fff; padding: 0 4px; border-radius: 2px;">PUBLIC</span>` : file.is_unlogged ? `<span style="background: var(--yellow); color: #000; padding: 0 4px; border-radius: 2px;">UNLOGGED</span>` : `<span style="background: var(--green); color: #000; padding: 0 4px; border-radius: 2px;">PRIVATE</span>`}
+            ${currentUser?.is_admin ? `<span>${t('owner_label')}: ${escapeHtml(file.owner || 'unknown')}</span>` : ''}
             ${file.is_dir ? `<span style="color: var(--yellow); font-weight: bold;">${t('folder_warn')}</span>` : `<span style="background: var(--border2); color: var(--accent); padding: 0 4px; border-radius: 2px;">${ext}</span>`}
             <span>${formatSize(file.size)}</span>
             <span>•</span>
@@ -1492,10 +1804,29 @@ function renderFiles(files) {
           ` : `
             <button type="button" class="btn btn-ghost" style="padding: 4px 10px; font-size: 10px;" onclick="openPlayer('${encodeURIComponent(file.name)}')">${t('btn_play')}</button>
           `}
+          ${file.can_delete ? `<button type="button" class="btn btn-ghost btn-danger" style="padding: 4px 10px; font-size: 10px;" onclick="deleteFile('${encodeURIComponent(file.name)}')">${t('delete_file_btn')}</button>` : ''}
         </div>
       </div>
     `;
   }).join('');
+}
+
+async function deleteFile(encodedName) {
+  const name = decodeURIComponent(encodedName);
+  if (!confirm(`Delete ${name}? This removes the file from disk.`)) return;
+  const res = await apiFetch('/api/files', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showNotification(data.error || 'Could not delete file', 'error');
+    return;
+  }
+  showNotification('File deleted');
+  fetchFiles();
+  fetchJobs();
 }
 
 function closePlayerModal() {
@@ -1516,7 +1847,6 @@ function openPlayer(encodedName) {
 }
 
 startPolling(2000);
-fetchJobs();
 </script>
 </body>
 </html>

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory, Response
 from flask_cors import CORS
+from werkzeug.security import check_password_hash, generate_password_hash
 import werkzeug.exceptions
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -26,6 +27,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 SERVE_DIR = DOWNLOAD_DIR / "_serve"
 WORK_DIR = DOWNLOAD_DIR / "_work"
 DB_PATH = DATA_DIR / "dlpod.db"
+ADMIN_USERNAME = "Gean-Torres"
 
 for directory in (DOWNLOAD_DIR, SERVE_DIR, WORK_DIR, DATA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
@@ -80,7 +82,25 @@ def init_db():
                 created_at TEXT
             )
         """)
-        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0,
+                created_at TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+
         # Migration: add client_id to jobs if missing
         cursor = conn.execute("PRAGMA table_info(jobs)")
         columns = [row[1] for row in cursor.fetchall()]
@@ -123,6 +143,87 @@ def init_db():
 init_db()
 
 
+def normalize_username(username: str) -> str:
+    return (username or "").strip()
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def is_admin_username(username: str) -> bool:
+    return normalize_username(username).lower() == ADMIN_USERNAME.lower()
+
+
+def public_user(user: sqlite3.Row | dict | None) -> dict | None:
+    if not user:
+        return None
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "email": user["email"],
+        "is_admin": bool(user["is_admin"]) or is_admin_username(user["username"]),
+        "created_at": user["created_at"],
+    }
+
+
+def get_user_by_token(token: str | None) -> dict | None:
+    if not token:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT users.* FROM users
+            JOIN auth_tokens ON auth_tokens.user_id = users.id
+            WHERE auth_tokens.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        user = dict(row)
+        user["is_admin"] = 1 if (user.get("is_admin") or is_admin_username(user.get("username", ""))) else 0
+        return user
+
+
+def current_user() -> dict | None:
+    return get_user_by_token(request.headers.get("X-Auth-Token"))
+
+
+def is_admin_user(user: dict | None) -> bool:
+    return bool(user and (user.get("is_admin") or is_admin_username(user.get("username", ""))))
+
+
+def client_id_for_user(user: dict | None, fallback: str | None = None) -> str | None:
+    if user:
+        return f"user:{user['id']}"
+    return fallback
+
+
+def owner_label(client_id: str | None) -> str:
+    if not client_id:
+        return "unlogged"
+    if client_id == "public":
+        return "public"
+    if client_id.startswith("user:"):
+        user_id = client_id.split(":", 1)[1]
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row[0] if row else "deleted user"
+    return "unlogged"
+
+
+def create_auth_token(user_id: str) -> str:
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO auth_tokens (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, utc_now()),
+        )
+    return token
+
+
 def save_job_to_db(job_id: str):
     with jobs_lock:
         job = jobs.get(job_id)
@@ -146,7 +247,7 @@ def log_admin_event(client_id: str | None, filename: str, url: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ip = request.remote_addr if request else "unknown"
     client_short = (client_id[:8] if client_id else "unknown")
-    
+
     log_line = f"[{timestamp}] IP: {ip} | User: {client_short} | URL: {url} | File: {filename}\n"
     try:
         with open(log_path, "a") as f:
@@ -374,6 +475,8 @@ def artifact_response(path: Path, cached: bool = False) -> dict:
 def serializable_job(job: dict) -> dict:
     clean = {k: v for k, v in job.items() if k != "proc"}
     clean["download_url"] = f"/api/jobs/{job['id']}/download" if job.get("serve_path") else None
+    clean["owner"] = owner_label(job.get("client_id"))
+    clean["is_unlogged"] = not job.get("client_id") or (job.get("client_id") not in {"public"} and not str(job.get("client_id", "")).startswith("user:"))
     return clean
 
 
@@ -448,7 +551,7 @@ def register_single_artifact(job_id: str, source_file: Path, duplicate_action: s
             final_dest = unique_path(final_dest)
 
     shutil.move(str(source_file), str(final_dest))
-    
+
     # Record download to DB
     with jobs_lock:
         job = jobs.get(job_id, {})
@@ -542,7 +645,7 @@ def run_ytdlp(job_id: str, url: str, fmt: str, quality: str, mode: str, duplicat
         output_template = str(job_dir / "%(title).200B [%(id)s].%(ext)s")
         cmd = [
             "yt-dlp", "--newline", "--progress", "--no-part", "--restrict-filenames",
-            "--windows-filenames", "--print", "before_dl:%(title)s", 
+            "--windows-filenames", "--print", "before_dl:%(title)s",
             "--remote-components", "ejs:github",
             "-o", output_template,
         ]
@@ -628,7 +731,7 @@ def run_spotdl(job_id: str, url: str, fmt: str, mode: str, duplicate_action: str
             cmd += ["--audio", str(advanced["audio_provider"])]
         if advanced.get("yt_dlp_args"):
             cmd += ["--yt-dlp-args", str(advanced["yt_dlp_args"])]
-        
+
         cookies_path = DATA_DIR / "cookies.txt"
         if cookies_path.exists():
             # Add --cookies to spotdl's yt-dlp arguments
@@ -773,6 +876,127 @@ def get_info():
         return jsonify({"title": resolve_job_title(url, source), "source": source, "error": str(exc), "is_playlist": infer_mode(url) == "playlist", "mode": infer_mode(url)}), 200
 
 
+@app.route("/api/auth/register", methods=["POST"])
+def register_user():
+    data = request.json or {}
+    username = normalize_username(data.get("username", ""))
+    email = normalize_email(data.get("email", ""))
+    password = data.get("password", "") or ""
+
+    if not username or not email or not password:
+        return jsonify({"error": "Username, email, and password are required"}), 400
+    if "@" not in email:
+        return jsonify({"error": "A valid email is required"}), 400
+    if len(username) > 80 or len(email) > 254:
+        return jsonify({"error": "Username or email is too long"}), 400
+
+    user_id = str(uuid.uuid4())
+    is_admin = 1 if is_admin_username(username) else 0
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                """
+                SELECT username, email FROM users
+                WHERE lower(username) = lower(?) OR lower(email) = lower(?)
+                LIMIT 1
+                """,
+                (username, email),
+            ).fetchone()
+            if existing:
+                if existing["username"].lower() == username.lower():
+                    return jsonify({"error": "Username is already registered"}), 409
+                return jsonify({"error": "Email is already registered"}), 409
+
+            conn.execute(
+                """
+                INSERT INTO users (id, username, email, password_hash, is_admin, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, username, email, generate_password_hash(password), is_admin, utc_now()),
+            )
+            user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Username or email is already registered"}), 409
+
+    token = create_auth_token(user_id)
+    return jsonify({"token": token, "user": public_user(user)}), 201
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def login_user():
+    data = request.json or {}
+    identifier = (data.get("identifier") or data.get("username") or data.get("email") or "").strip()
+    password = data.get("password", "") or ""
+    if not identifier or not password:
+        return jsonify({"error": "Username/email and password are required"}), 400
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        user = conn.execute(
+            "SELECT * FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)",
+            (identifier, identifier),
+        ).fetchone()
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid username/email or password"}), 401
+
+    token = create_auth_token(user["id"])
+    return jsonify({"token": token, "user": public_user(user)})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout_user():
+    token = request.headers.get("X-Auth-Token")
+    if token:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    user = current_user()
+    if not user:
+        return jsonify({"user": None})
+    return jsonify({"user": public_user(user)})
+
+
+@app.route("/api/auth/change-password", methods=["POST"])
+def change_password():
+    user = current_user()
+    if not user:
+        return jsonify({"error": "Login required"}), 401
+    data = request.json or {}
+    current_password = data.get("current_password", "") or ""
+    new_password = data.get("new_password", "") or ""
+    if not new_password:
+        return jsonify({"error": "New password is required"}), 400
+    if not check_password_hash(user["password_hash"], current_password):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (generate_password_hash(new_password), user["id"]))
+        conn.execute("DELETE FROM auth_tokens WHERE user_id = ? AND token != ?", (user["id"], request.headers.get("X-Auth-Token")))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/recover", methods=["POST"])
+def recover_password_placeholder():
+    return jsonify({"ok": False, "error": "Email recovery is not implemented yet"}), 501
+
+
+@app.route("/api/admin/users", methods=["GET"])
+def admin_users():
+    user = current_user()
+    if not is_admin_user(user):
+        return jsonify({"error": "Admin access required"}), 403
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT id, username, email, is_admin, created_at FROM users ORDER BY created_at DESC").fetchall()
+    return jsonify([public_user(row) for row in rows])
+
+
 @app.route("/api/duplicates", methods=["POST"])
 def check_duplicates():
     data = request.json or {}
@@ -789,7 +1013,8 @@ def refresh_download_index():
 
 @app.route("/api/clear", methods=["POST"])
 def clear_jobs():
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
     to_dismiss = []
     with jobs_lock:
         for job_id, job in jobs.items():
@@ -805,7 +1030,8 @@ def clear_jobs():
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
     data = request.json or {}
     url = data.get("url", "").strip()
     fmt = data.get("format", "mp3")
@@ -861,7 +1087,8 @@ def start_download():
     return jsonify({"job_id": job_id}), 202
 @app.route("/api/jobs/<job_id>/stop", methods=["POST"])
 def stop_job(job_id):
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
     with jobs_lock:
         job = jobs.get(job_id)
         if not job or job.get("client_id") != client_id:
@@ -879,15 +1106,28 @@ def stop_job(job_id):
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
+    scope = request.args.get("scope", "mine")
     with jobs_lock:
-        user_jobs = [job for job in jobs.values() if job.get("client_id") == client_id and not job.get("dismissed")]
-        return jsonify([serializable_job(job) for job in reversed(user_jobs)][:50])
+        if is_admin_user(user) and scope == "all":
+            user_jobs = [job for job in jobs.values() if not job.get("dismissed")]
+        elif is_admin_user(user) and scope == "unlogged":
+            user_jobs = [
+                job for job in jobs.values()
+                if not job.get("dismissed")
+                and job.get("client_id") != "public"
+                and not str(job.get("client_id") or "").startswith("user:")
+            ]
+        else:
+            user_jobs = [job for job in jobs.values() if job.get("client_id") == client_id and not job.get("dismissed")]
+        return jsonify([serializable_job(job) for job in reversed(user_jobs)][:100])
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
     with jobs_lock:
         job = jobs.get(job_id)
         if not job or job.get("dismissed") or job.get("client_id") != client_id:
@@ -918,30 +1158,51 @@ def download_file(job_id):
 
 @app.route("/api/files", methods=["GET"])
 def list_all_files():
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
+    scope = request.args.get("scope", "mine")
     files = []
-    
-    with jobs_lock:
-        # Show personal downloads OR public scanned files
-        user_finished_jobs = [
-            job for job in jobs.values() 
-            if (job.get("client_id") == client_id or job.get("client_id") == "public") and job["status"] == "done"
-        ]
 
+    with jobs_lock:
+        if is_admin_user(user) and scope == "all":
+            user_finished_jobs = [job for job in jobs.values() if job["status"] == "done"]
+        elif is_admin_user(user) and scope == "unlogged":
+            user_finished_jobs = [
+                job for job in jobs.values()
+                if job["status"] == "done"
+                and job.get("client_id") != "public"
+                and not str(job.get("client_id") or "").startswith("user:")
+            ]
+        else:
+            # Show personal downloads OR public scanned files
+            user_finished_jobs = [
+                job for job in jobs.values()
+                if (job.get("client_id") == client_id or job.get("client_id") == "public") and job["status"] == "done"
+            ]
+
+    seen_paths = set()
     for job in user_finished_jobs:
         path_str = job.get("serve_path") or job.get("filename")
         if not path_str:
             continue
-            
+
         path = Path(path_str)
         if path.exists():
+            resolved = str(path.resolve())
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
             stat = path.stat()
             files.append({
+                "job_id": job.get("id"),
                 "name": path.name,
                 "is_dir": path.is_dir(),
                 "size": stat.st_size if path.is_file() else sum(f.stat().st_size for f in path.rglob("*") if f.is_file()),
                 "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "is_public": job.get("client_id") == "public"
+                "is_public": job.get("client_id") == "public",
+                "owner": owner_label(job.get("client_id")),
+                "is_unlogged": not job.get("client_id") or (job.get("client_id") != "public" and not str(job.get("client_id") or "").startswith("user:")),
+                "can_delete": is_admin_user(user),
             })
     # Sort by mtime descending
     files.sort(key=lambda x: x["mtime"], reverse=True)
@@ -994,15 +1255,56 @@ def download_direct():
         app.logger.error(f"Error in download_direct: {e}", exc_info=True)
         return jsonify({"error": "Internal server error", "message": str(e)}), 500
 
+@app.route("/api/files", methods=["DELETE"])
+def delete_file():
+    user = current_user()
+    if not is_admin_user(user):
+        return jsonify({"error": "Admin access required"}), 403
+
+    data = request.json or {}
+    name = (data.get("name") or request.args.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+
+    download_dir_abs = DOWNLOAD_DIR.resolve()
+    safe_path = (download_dir_abs / name).resolve()
+    if not safe_path.is_relative_to(download_dir_abs):
+        return jsonify({"error": "Invalid file path"}), 403
+    if not safe_path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    deleted_jobs = []
+    with jobs_lock:
+        for job_id, job in jobs.items():
+            path_str = job.get("serve_path") or job.get("filename")
+            if path_str and Path(path_str).resolve() == safe_path:
+                job["dismissed"] = True
+                deleted_jobs.append(job_id)
+
+    if safe_path.is_dir():
+        shutil.rmtree(safe_path)
+    else:
+        safe_path.unlink()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM downloads WHERE path = ?", (str(safe_path),))
+
+    for deleted_job_id in deleted_jobs:
+        save_job_to_db(deleted_job_id)
+
+    return jsonify({"ok": True, "deleted_jobs": len(deleted_jobs)})
+
+
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
-    client_id = request.headers.get("X-Client-ID")
+    user = current_user()
+    client_id = client_id_for_user(user, request.headers.get("X-Client-ID"))
     with jobs_lock:
         job = jobs.get(job_id)
-        if not job or job.get("client_id") != client_id:
+        if not job or (job.get("client_id") != client_id and not is_admin_user(user)):
             return jsonify({"error": "Not found"}), 404
         job["dismissed"] = True
-    
+
     save_job_to_db(job_id)
     return jsonify({"ok": True})
 

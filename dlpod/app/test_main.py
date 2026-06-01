@@ -287,3 +287,254 @@ def test_reuse_duplicate_policy_allows_exact_url_with_placeholder_title(client):
     assert reused is True
     assert jobs['exact-url-job']['status'] == 'done'
     assert jobs['exact-url-job']['duplicate_used'] is True
+
+
+def test_register_login_and_password_change(client):
+    response = client.post('/api/auth/register', json={
+        'username': 'tester',
+        'email': 'tester@example.test',
+        'password': 'password123',
+    })
+    assert response.status_code == 201
+    data = response.get_json()
+    token = data['token']
+    assert data['user']['username'] == 'tester'
+    assert data['user']['is_admin'] is False
+
+    response = client.get('/api/auth/me', headers={'X-Auth-Token': token})
+    assert response.status_code == 200
+    assert response.get_json()['user']['email'] == 'tester@example.test'
+
+    response = client.post('/api/auth/change-password', headers={'X-Auth-Token': token}, json={
+        'current_password': 'password123',
+        'new_password': 'new-password',
+    })
+    assert response.status_code == 200
+    assert response.get_json()['ok'] is True
+
+    response = client.post('/api/auth/login', json={'identifier': 'tester', 'password': 'new-password'})
+    assert response.status_code == 200
+    assert response.get_json()['user']['username'] == 'tester'
+
+
+def test_register_rejects_repeated_username_and_email(client):
+    response = client.post('/api/auth/register', json={
+        'username': 'RepeatUser',
+        'email': 'repeat@example.test',
+        'password': 'password123',
+    })
+    assert response.status_code == 201
+
+    response = client.post('/api/auth/register', json={
+        'username': 'repeatuser',
+        'email': 'other@example.test',
+        'password': 'password123',
+    })
+    assert response.status_code == 409
+    assert response.get_json()['error'] == 'Username is already registered'
+
+    response = client.post('/api/auth/register', json={
+        'username': 'another-user',
+        'email': 'REPEAT@example.test',
+        'password': 'password123',
+    })
+    assert response.status_code == 409
+    assert response.get_json()['error'] == 'Email is already registered'
+
+
+def test_hardcoded_admin_username_can_open_administration(client):
+    response = client.post('/api/auth/register', json={
+        'username': 'Gean-Torres',
+        'email': 'gean@example.test',
+        'password': 'admin-pass',
+    })
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data['user']['is_admin'] is True
+
+    response = client.get('/api/admin/users', headers={'X-Auth-Token': data['token']})
+    assert response.status_code == 200
+    users = response.get_json()
+    assert users[0]['username'] == 'Gean-Torres'
+    assert users[0]['is_admin'] is True
+
+
+def test_logged_in_downloads_use_account_client_id(client, monkeypatch):
+    response = client.post('/api/auth/register', json={
+        'username': 'accounted',
+        'email': 'accounted@example.test',
+        'password': 'password123',
+    })
+    token = response.get_json()['token']
+
+    def fake_put(task):
+        return None
+
+    monkeypatch.setattr(main.task_queue, 'put', fake_put)
+    response = client.post(
+        '/api/download',
+        headers={'X-Client-ID': 'browser-client', 'X-Auth-Token': token},
+        json={'url': 'https://youtube.com/watch?v=dQw4w9WgXcQ'},
+    )
+    assert response.status_code == 202
+    job_id = response.get_json()['job_id']
+    assert jobs[job_id]['client_id'].startswith('user:')
+
+    response = client.get('/api/jobs', headers={'X-Client-ID': 'other-browser', 'X-Auth-Token': token})
+    assert response.status_code == 200
+    assert response.get_json()[0]['id'] == job_id
+
+
+def test_email_recovery_placeholder(client):
+    response = client.post('/api/auth/recover', json={'email': 'tester@example.test'})
+    assert response.status_code == 501
+    assert response.get_json()['error'] == 'Email recovery is not implemented yet'
+
+
+def test_admin_can_scope_jobs_to_all_or_unlogged(client):
+    admin_response = client.post('/api/auth/register', json={
+        'username': 'Gean-Torres',
+        'email': 'admin-scope@example.test',
+        'password': 'admin-pass',
+    })
+    admin_token = admin_response.get_json()['token']
+    user_response = client.post('/api/auth/register', json={
+        'username': 'scoped-user',
+        'email': 'scoped-user@example.test',
+        'password': 'password123',
+    })
+    user_id = user_response.get_json()['user']['id']
+
+    for job_id, client_id in [('admin-job', f'user:{admin_response.get_json()["user"]["id"]}'), ('user-job', f'user:{user_id}'), ('anon-job', 'browser-client')]:
+        jobs[job_id] = {
+            'id': job_id,
+            'client_id': client_id,
+            'url': 'https://example.test/video',
+            'source': 'yt',
+            'format': 'mp3',
+            'quality': '192',
+            'title': job_id,
+            'mode': 'single',
+            'is_playlist': False,
+            'duplicate_action': 'again',
+            'status': 'done',
+            'progress': 100,
+            'log': [],
+            'filename': None,
+            'serve_path': None,
+            'artifacts': [],
+            'started_at': main.utc_now(),
+            'finished_at': main.utc_now(),
+            'last_activity': main.utc_now(),
+        }
+
+    response = client.get('/api/jobs?scope=all', headers={'X-Auth-Token': admin_token})
+    assert response.status_code == 200
+    assert {job['id'] for job in response.get_json()} == {'admin-job', 'user-job', 'anon-job'}
+
+    response = client.get('/api/jobs?scope=unlogged', headers={'X-Auth-Token': admin_token})
+    assert response.status_code == 200
+    assert [job['id'] for job in response.get_json()] == ['anon-job']
+
+
+def test_admin_can_view_and_delete_other_users_files(client):
+    admin_response = client.post('/api/auth/register', json={
+        'username': 'Gean-Torres',
+        'email': 'admin-delete@example.test',
+        'password': 'admin-pass',
+    })
+    admin_token = admin_response.get_json()['token']
+    user_response = client.post('/api/auth/register', json={
+        'username': 'file-owner',
+        'email': 'file-owner@example.test',
+        'password': 'password123',
+    })
+    owner_id = user_response.get_json()['user']['id']
+
+    media = main.DOWNLOAD_DIR / 'owned-song.mp3'
+    media.write_bytes(b'audio')
+    jobs['owned-file'] = {
+        'id': 'owned-file',
+        'client_id': f'user:{owner_id}',
+        'url': 'https://example.test/video',
+        'source': 'yt',
+        'format': 'mp3',
+        'quality': '192',
+        'title': 'owned-song',
+        'mode': 'single',
+        'is_playlist': False,
+        'duplicate_action': 'again',
+        'status': 'done',
+        'progress': 100,
+        'log': [],
+        'filename': str(media),
+        'serve_path': str(media),
+        'artifacts': [],
+        'started_at': main.utc_now(),
+        'finished_at': main.utc_now(),
+        'last_activity': main.utc_now(),
+    }
+
+    response = client.get('/api/files?scope=all', headers={'X-Auth-Token': admin_token})
+    assert response.status_code == 200
+    files = response.get_json()
+    assert files[0]['name'] == 'owned-song.mp3'
+    assert files[0]['owner'] == 'file-owner'
+    assert files[0]['can_delete'] is True
+
+    response = client.delete('/api/files', headers={'X-Auth-Token': admin_token}, json={'name': 'owned-song.mp3'})
+    assert response.status_code == 200
+    assert response.get_json()['deleted_jobs'] == 1
+    assert not media.exists()
+    assert jobs['owned-file']['dismissed'] is True
+
+
+def test_non_admin_cannot_delete_files(client):
+    media = main.DOWNLOAD_DIR / 'protected.mp3'
+    media.write_bytes(b'audio')
+
+    response = client.delete('/api/files', json={'name': 'protected.mp3'})
+
+    assert response.status_code == 403
+    assert media.exists()
+
+
+def test_admin_can_dismiss_other_users_jobs(client):
+    admin_response = client.post('/api/auth/register', json={
+        'username': 'Gean-Torres',
+        'email': 'admin-dismiss@example.test',
+        'password': 'admin-pass',
+    })
+    admin_token = admin_response.get_json()['token']
+    user_response = client.post('/api/auth/register', json={
+        'username': 'dismiss-owner',
+        'email': 'dismiss-owner@example.test',
+        'password': 'password123',
+    })
+    owner_id = user_response.get_json()['user']['id']
+    jobs['other-user-job'] = {
+        'id': 'other-user-job',
+        'client_id': f'user:{owner_id}',
+        'url': 'https://example.test/video',
+        'source': 'yt',
+        'format': 'mp3',
+        'quality': '192',
+        'title': 'Other User Job',
+        'mode': 'single',
+        'is_playlist': False,
+        'duplicate_action': 'again',
+        'status': 'done',
+        'progress': 100,
+        'log': [],
+        'filename': None,
+        'serve_path': None,
+        'artifacts': [],
+        'started_at': main.utc_now(),
+        'finished_at': main.utc_now(),
+        'last_activity': main.utc_now(),
+    }
+
+    response = client.delete('/api/jobs/other-user-job', headers={'X-Auth-Token': admin_token})
+
+    assert response.status_code == 200
+    assert jobs['other-user-job']['dismissed'] is True
